@@ -1,0 +1,42 @@
+# .gitignore
+
+# 生成规范与中间产物（不提交）
+_build/
+archive_*/
+
+# 编译产物
+*.o
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.axf
+*.htm
+*.dep
+*.crf
+*.iex
+*.lnp
+*.sct
+*.build_log.htm
+Debug/
+Release/
+Objects/
+Listings/
+MDK-ARM/*/
+!MDK-ARM/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.uvgui.*
+*.uvopt.bak
+*.uvproj.bak
+*.bak
+*.tmp
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store
