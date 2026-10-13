@@ -31,6 +31,7 @@ MDK-ARM/*/
 .vscode/
 .idea/
 *.uvgui.*
+*.uvguix.*
 *.uvopt.bak
 *.uvproj.bak
 *.bak
