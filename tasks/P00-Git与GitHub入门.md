@@ -18,26 +18,29 @@
 
 ## 任务
 
+> 📖 每条任务后面都带 **教程** 链接，点击直达手把手教程（含知识点详解、完整操作步骤、可复制代码）。
+> 教程文件：`tutorials/P00-Git与GitHub入门.md`（本卡片在 `tasks/` 目录下，故链接写作 `../tutorials/`）
+
 ### A 档 · 全员必做（保底）
 
-- [ ] 1. 用自己的话写一段不超过 100 字的说明：Git 与网盘（或 QQ 传文件）有什么不同。写进下面第 8 条的仓库 README 里。
-- [ ] 2. 在电脑上安装 Git，装完打开命令行执行 `git --version`，把输出的版本号截图。
-- [ ] 3. 执行 `git config --global user.name "你的名字"` 和 `git config --global user.email "你的邮箱"`，然后用 `git config --global --list` 把这两项配置截图。
-- [ ] 4. 新建一个文件夹，在里面放一个 `hello.txt`，用命令把该文件夹变成 Git 仓库（`git init`），并截图 `git status` 的输出。
-- [ ] 5. 把 `hello.txt` 提交到仓库：先 `git add`，再 `git commit`（写一条有意义的中文提交信息），然后用 `git log` 截图看到这次提交。
-- [ ] 6. 修改 `hello.txt` 的内容，再用 `git status` 观察"已修改但未提交"的状态并截图；然后提交第二次。
-- [ ] 7. 注册一个 GitHub 账号（用常用邮箱），在网站上新建一个**私有**仓库，仓库名自定。
-- [ ] 8. 把这个本地仓库与 GitHub 上的远程仓库连起来，并完成第一次 `push`；推送后在**浏览器打开仓库网页**，确认能看到 `hello.txt` 与两条提交记录，并截图。在这个仓库里写一份 README，把你第 1 条的说明放进去。
-- [ ] 9. 在仓库里新建 `.gitignore` 文件，把 `.o`、`.hex`、`Debug/`、`Objects/` 这几类编译产物写进去（后面做单片机项目时马上就会用到），提交并推送。
+- [ ] 1. 用自己的话写一段不超过 100 字的说明：Git 与网盘（或 QQ 传文件）有什么不同。写进下面第 8 条的仓库 README 里。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a1)
+- [ ] 2. 在电脑上安装 Git，装完打开命令行执行 `git --version`，把输出的版本号截图。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a2)
+- [ ] 3. 执行 `git config --global user.name "你的名字"` 和 `git config --global user.email "你的邮箱"`，然后用 `git config --global --list` 把这两项配置截图。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a3)
+- [ ] 4. 新建一个文件夹，在里面放一个 `hello.txt`，用命令把该文件夹变成 Git 仓库（`git init`），并截图 `git status` 的输出。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a4)
+- [ ] 5. 把 `hello.txt` 提交到仓库：先 `git add`，再 `git commit`（写一条有意义的中文提交信息），然后用 `git log` 截图看到这次提交。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a5)
+- [ ] 6. 修改 `hello.txt` 的内容，再用 `git status` 观察"已修改但未提交"的状态并截图；然后提交第二次。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a6)
+- [ ] 7. 注册一个 GitHub 账号（用常用邮箱），在网站上新建一个**私有**仓库，仓库名自定。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a7)
+- [ ] 8. 把这个本地仓库与 GitHub 上的远程仓库连起来，并完成第一次 `push`；推送后在**浏览器打开仓库网页**，确认能看到 `hello.txt` 与两条提交记录，并截图。在这个仓库里写一份 README，把你第 1 条的说明放进去。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a8)
+- [ ] 9. 在仓库里新建 `.gitignore` 文件，把 `.o`、`.hex`、`Debug/`、`Objects/` 这几类编译产物写进去（后面做单片机项目时马上就会用到），提交并推送。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a9)
 
 ### B 档 · 全员必做（进阶）
 
-- [ ] 1. 建立分支：新建分支 `feature/edit-hello`，在分支上修改 `hello.txt` 并提交，然后把该分支合并回主分支，截图 `git log --graph --oneline` 的结果。
-- [ ] 2. 做一次"改坏了再救回来"的练习：修改 `hello.txt` 后**先不提交**，用命令把这次修改撤销掉，确认文件回到修改前的样子并截图。
-- [ ] 3. 把远程仓库上的内容用 `clone` 重新拉取到另一个文件夹，打开确认文件与提交历史完整，说明 `clone` 与"下载压缩包"的区别。
-- [ ] 4. 在 GitHub 网页上查看自己仓库的提交历史，点开某一次提交，讲清"这次提交改了哪几行"；把截图放进 README。
-- [ ] 5. 写一份让不看代码的人也能看懂的 README：包含本仓库是做什么的、目录里有什么、怎么运行或查看。提交并推送。
-- [ ] 6. 做一次"提交回顾"实验：故意写一条无意义的提交信息（如"aaa"），然后说明为什么这样的信息在半年后对你自己也没用，并把正确的写法写进 README。
+- [ ] 1. 建立分支：新建分支 `feature/edit-hello`，在分支上修改 `hello.txt` 并提交，然后把该分支合并回主分支，截图 `git log --graph --oneline` 的结果。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-b1)
+- [ ] 2. 做一次"改坏了再救回来"的练习：修改 `hello.txt` 后**先不提交**，用命令把这次修改撤销掉，确认文件回到修改前的样子并截图。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-b2)
+- [ ] 3. 把远程仓库上的内容用 `clone` 重新拉取到另一个文件夹，打开确认文件与提交历史完整，说明 `clone` 与"下载压缩包"的区别。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-b3)
+- [ ] 4. 在 GitHub 网页上查看自己仓库的提交历史，点开某一次提交，讲清"这次提交改了哪几行"；把截图放进 README。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-b4)
+- [ ] 5. 写一份让不看代码的人也能看懂的 README：包含本仓库是做什么的、目录里有什么、怎么运行或查看。提交并推送。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-b5)
+- [ ] 6. 做一次"提交回顾"实验：故意写一条无意义的提交信息（如"aaa"），然后说明为什么这样的信息在半年后对你自己也没用，并把正确的写法写进 README。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-b6)
 
 ## 交付物
 

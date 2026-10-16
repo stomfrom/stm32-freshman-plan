@@ -629,7 +629,7 @@ GPIOA->IDR & (1 << 0)    /* 结果非 0 → PA0 是高电平；为 0 → 低电�
 /* 直接读 GPIO 输入寄存器的某一位：port 是 GPIOA/GPIOB/...，pin 是 0~15 */
 #define GPIO_READ_BIT(port, pin)   ( ((port)->IDR >> (pin)) & 0x01U )
 
-/* 直接写输出寄存器某一位（顺带把 A2 的操作也了解一遍） */
+/* 直接写输出寄存器某一位（顺带把 A2 的操作再过一遍） */
 #define GPIO_WRITE_BIT(port, pin, v)  do {                        \
         if (v) (port)->BSRR = (1U << (pin));                      \
         else   (port)->BSRR = (1U << ((pin) + 16));               \
