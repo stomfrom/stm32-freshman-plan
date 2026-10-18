@@ -18,16 +18,18 @@
 ### A 档 · 全员必做（保底）
 
 - [ ] 1. 在 CubeMX 里启用 FreeRTOS，生成一个可编译可下载的 RTOS 工程。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-a1)
-- [ ] 2. 创建 2 个任务：一个让 LED 以 1Hz 闪烁，一个每 2 秒往串口打印一行信息。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-a2)
+- [ ] 2. 创建 2 个任务：一个让 LED 以 1Hz 闪烁，一个每 2 秒往串口打印一行信息。（用 CMSIS-RTOS2 API，注意 `stack_size` 单位是字节） [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-a2)
 - [ ] 3. 用 `vTaskDelay` 控制两个任务的节拍，在 README 里说明它与裸机 `HAL_Delay` 的本质区别（一个是让出 CPU，一个是原地空等）。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-a3)
 - [ ] 4. 创建第 3 个任务：周期性读取按键状态并打印，确认三个任务互不干扰地各自运行。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-a4)
 - [ ] 5. 用串口分别打印三个任务的执行次数，连续运行 10 分钟后核对每个任务的实际执行频率是否与设定一致。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-a5)
 
 ### B 档 · 全员必做（进阶）
 
+> **B 档口径说明（不新增任务条目）**：本档"栈"相关验收统一按 **CMSIS-RTOS2 的剩余字节数** 口径：用 `osThreadGetStackSpace()` 读每个任务的**剩余栈字节数**（不是 words、也不是使用率百分比），以最紧张的任务剩余 ≥ 256 字节为准；`osThreadId_t` 是 CMSIS 包装对象，不是 FreeRTOS 原生 `TaskHandle_t`。验收标准里"栈使用率 40%~80%"一条按此口径换算理解。
+
 - [ ] 1. 用队列在两个任务之间传递数据（一个任务生产采集数据、另一个任务消费并打印），说明不用全局变量的原因。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-b1)
 - [ ] 2. 用信号量或互斥锁保护一个被多个任务访问的共享资源（如共享的串口或共享的显示缓存），并说明不加保护时会出现什么现象。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-b2)
-- [ ] 3. 用栈水位检查接口查看每个任务的栈使用情况，把栈大小调整到合理值（既不浪费也不溢出），记录调整前后的数值。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-b3)
+- [ ] 3. 用 `osThreadGetStackSpace()` 读出每个任务的**剩余栈字节数**，把最紧张的任务栈加大到剩余 ≥ 256 字节；说明 `osThreadId_t` 是 CMSIS 包装对象、不是 `TaskHandle_t`。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-b3)
 - [ ] 4. 把 P08 的 ADC 采集功能移植成一个独立任务，与显示任务、上报任务组成完整的数据采集器，做一次 30 分钟连续运行记录。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-b4)
 - [ ] 5. 在 README 里画出任务与队列的关系图（哪个任务生产、哪个任务消费、哪个任务上报），并说明每个任务的优先级设定理由。 [📖 教程](../tutorials/P09-FreeRTOS入门.md#p09-b5)
 

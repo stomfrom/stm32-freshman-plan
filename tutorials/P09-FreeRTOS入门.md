@@ -149,29 +149,67 @@ void MyTask(void *argument)
 
 **`pdMS_TO_TICKS(ms)`**：把毫秒换算成 RTOS 的 tick 数。**凡是要延时就用它**，别直接用 tick 数。
 
+**头文件别漏**：`cmsis_os2.h` **不含** `vTaskDelay` 与 `pdMS_TO_TICKS`（它们属于 FreeRTOS 原生 API）。只要你在 CMSIS-RTOS2 工程里直接写 `vTaskDelay` / `pdMS_TO_TICKS`，就必须补上：
+
+```c
+#include "FreeRTOS.h"     /* pdMS_TO_TICKS、configUSE_TIME_SLICING 等 */
+#include "task.h"         /* vTaskDelay / vTaskDelayUntil 的声明 */
+```
+
+> **⚠️ 栈单位：CMSIS-RTOS2 的 `stack_size` 单位是字节，CubeMX 界面里填的是 words（字），两者差 4 倍**，这是最常见的栈溢出原因。跑 `printf` 的任务至少给 **1024 字节**。
+
+**为什么必须显式给 `osThreadAttr_t`**：`osThreadNew(task, NULL, NULL)` 用的是默认属性（默认栈很小、名字为空），一旦任务里有 `printf` 或深层函数调用就会溢出。显式指定 `name`、`stack_size`、`priority`，出问题时才能通过栈水位（B3）定位到具体任务。
+
 ### 操作步骤
 
 **方式一（推荐，用 CubeMX 图形界面）**
 
 1. `FREERTOS` → `Tasks and Queues` → `Add`：
-   - `Task Name`: `LedTask`，`Priority`: `osPriorityNormal`，`Stack Size`: **256**（words）
+   - `Task Name`: `LedTask`，`Priority`: `osPriorityNormal`，`Stack Size`: **256**（**界面单位是 words**，256 words = 1024 字节）
    - 再加一个 `ReportTask`，同上配置
 2. 生成的代码在 `Core/Src/freertos.c` 里
 
+> 记住这个换算：**CubeMX 界面填 256（words）× 4 = 运行时 1024 字节**；而代码里 `osThreadAttr_t.stack_size` 填的是**字节数**，填 256 就只有 256 字节，连一次 `printf` 都不够。
+
 **方式二（自己写，更灵活）**
 
-在 `main.c` 的 `/* USER CODE BEGIN 2 */` 里创建任务：
+先补头文件与任务函数声明（放在 `/* USER CODE BEGIN 0 */`）：
 
 ```c
 #include "cmsis_os2.h"    /* CMSIS_V2 接口 */
+#include "FreeRTOS.h"     /* pdMS_TO_TICKS 在这里（cmsis_os2.h 不含） */
+#include "task.h"         /* vTaskDelay 的声明在这里 */
 
 /* 任务函数的声明 */
 void LedTask(void *argument);
 void ReportTask(void *argument);
 
-/* 创建任务 */
-osThreadId_t led_id = osThreadNew(LedTask, NULL, NULL);
-osThreadId_t rep_id = osThreadNew(ReportTask, NULL, NULL);
+/* 显式属性：name / stack_size（字节！）/ priority */
+static const osThreadAttr_t led_attr = {
+    .name       = "led",
+    .stack_size = 1024,              /* 1024 字节 = 256 words */
+    .priority   = osPriorityNormal,
+};
+
+static const osThreadAttr_t rep_attr = {
+    .name       = "report",
+    .stack_size = 1024,              /* 有 printf，至少 1024 字节 */
+    .priority   = osPriorityNormal,
+};
+```
+
+> Keil 若报"designated initializer"相关错误，把 `Options for Target → C/C++ → C99 Mode` 打开；若必须用 C90，就改成先 `osThreadAttr_t led_attr = {0};` 再逐项 `led_attr.name = "led";` 赋值（此时不能加 `const`）。
+
+在 `main()` 里创建任务（`/* USER CODE BEGIN 2 */`，且**必须在 `osKernelStart()` 之前**）：
+
+```c
+osThreadId_t led_id = osThreadNew(LedTask, NULL, &led_attr);
+osThreadId_t rep_id = osThreadNew(ReportTask, NULL, &rep_attr);
+
+if (led_id == NULL || rep_id == NULL)
+{
+    printf("task create failed: heap too small?\r\n");
+}
 ```
 
 在 `/* USER CODE BEGIN 4 */`（或独立文件）里实现：
@@ -200,6 +238,8 @@ void ReportTask(void *argument)
 }
 ```
 
+> **本文统一用 CMSIS-RTOS2 API**（`osThreadNew` / `osDelay` / `osMessageQueuePut` 等）；如果你要混用原生 API（比如在 CMSIS 任务里直接调 `vTaskDelay`），必须自己 include `FreeRTOS.h` 与 `task.h`，且**不要混用 `osThreadId_t` 与 `TaskHandle_t`**——它们属于两层封装，类型不兼容，混着传句柄会编译报错或运行异常。
+
 > **用 CubeMX 方式时**：任务函数框架已生成在 `freertos.c`，你只需在 `for(;;)` 里填内容，并加 `printf` 重定向（注意要在任务启动前初始化串口）。
 
 ### 验证方法
@@ -207,6 +247,7 @@ void ReportTask(void *argument)
 - LED 以 1Hz 闪
 - 串口每 2 秒打印一行，编号递增
 - 两者**同时**工作、互不影响
+- 任务名能在调试器/`osThreadGetName()` 里看到（说明用的是显式属性，不是默认值）
 
 ### 常见问题
 
@@ -214,7 +255,8 @@ void ReportTask(void *argument)
 |---|---|---|
 | 只有 LED 闪，串口没输出 | 串口没初始化，或任务没创建成功 | 检查 `MX_USART1_UART_Init()` 调用顺序 |
 | 任务完全没跑 | 任务创建失败（堆不足） | 检查 `osThreadNew` 返回值是否为 `NULL`；加大堆 |
-| 程序卡在启动 | 栈太小 | 加大任务栈 |
+| 程序卡在启动 | 栈太小 | 加大任务栈（注意 `stack_size` 是**字节**） |
+| 编译报 `vTaskDelay` / `pdMS_TO_TICKS` 未定义 | 只 include 了 `cmsis_os2.h` | 补 `#include "FreeRTOS.h"`、`#include "task.h"` |
 | `printf` 输出交叉乱码 | 多任务同时打印（B2 解决） | 见 B2 |
 
 ---
@@ -229,55 +271,61 @@ void ReportTask(void *argument)
 **⭐ 这是 RTOS 最核心的一个概念**：
 
 ```
-HAL_Delay(500)：         while (计数没到) { /* 原地转圈空等 */ }
-                         ↑ CPU 被这一个任务独占，其他任务全停
+HAL_Delay(500)：      while (uwTick 没到) { /* 原地忙等，不让出 CPU */ }
+                      ↑ 任务一直占着 CPU、不进入阻塞态；但调度器并没有被关掉
 
-vTaskDelay(500ms)：      把本任务标记为"阻塞"，交还 CPU 给调度器
-                         调度器立刻去跑别的就绪任务
-                         500ms 后本任务重新变"就绪"，等调度器安排
-                         ↑ CPU 在这 500ms 里被别的任务充分使用
+osDelay(500)：        把本任务标记为"阻塞"，交还 CPU 给调度器
+                      调度器立刻去跑别的就绪任务
+                      500ms 后本任务重新变"就绪"，等调度器安排
+                      ↑ CPU 在这 500ms 里被别的任务充分使用
 ```
 
 **一张对比表**：
 
-| | `HAL_Delay()` | `vTaskDelay()` |
+| | `HAL_Delay()` | `osDelay()` / `vTaskDelay()` |
 |---|---|---|
-| CPU 在等待时 | **空转浪费** | **让给其他任务** |
-| 其他任务能否跑 | ❌ 全部阻塞 | ✅ 正常运行 |
-| 适用场景 | 纯裸机 | RTOS 里的任何延时 |
+| 等待时 CPU | **忙等空转**，占满 CPU | **让给其他任务** |
+| 是否进入阻塞态 | 否（一直在就绪/运行） | 是 |
+| 调度器是否关闭 | **不关闭**，SysTick 照常运行 | 调度器正常运行 |
+| 高优先级任务 | 仍能抢占（不会被完全挡住） | 正常抢占 |
+| 同优先级任务 | 只能靠时间片轮流（`configUSE_TIME_SLICING=1`），**时序抖动** | 正常调度 |
+| 低优先级任务 | 会被**饿死** | 正常跑 |
+| 真实危害 | 占满 CPU、浪费电、时序抖动 | 无 |
 
-**在 RTOS 里用 `HAL_Delay` 会怎样**：它不会让出 CPU，会**拖住整个系统**（其他任务在此期间完全得不到执行）。个人项目可能"看起来还能跑"，但实时性完全没了。
+**准确的说法**：`HAL_Delay` 是**忙等**——它不让出 CPU、不进入阻塞态，但**不会关闭调度器**。SysTick 照常在跑，所以**高优先级任务仍会抢占它**；同优先级任务靠时间片轮流（`configUSE_TIME_SLICING=1`），所以你会发现打印节拍被拉长且不可预测；**低优先级任务会被饿死**。真正的问题是它**占满 CPU、浪费电，而且同级任务的时间片轮转导致时序抖动**。
+
+> 想稳定复现"ReportTask 间隔变差"的现象：把 ReportTask 的优先级设为 **`osPriorityBelowNormal`**（比 LedTask 低），就能观察到它被饿（打印次数明显低于理论值）。反过来把 ReportTask 设成更高优先级，你会看到它照样能跑——**因为调度器没关**，这正是"忙等 ≠ 关调度器"的直接证据。
+
+正确的延时是 **`osDelay(500)`**（CMSIS-RTOS2，单位 ms）；用原生 API 时是 `vTaskDelay(pdMS_TO_TICKS(500))`（需 include `FreeRTOS.h` 与 `task.h`）。
 
 ### 操作步骤
 
 在 README 里写一段对比说明（照上面表格组织），并**做一个小实验证明区别**：
 
 ```c
-/* 实验：把 LedTask 里的 vTaskDelay 换成 HAL_Delay(500)，观察 ReportTask */
+/* 实验：把 LedTask 里的延时换成 HAL_Delay(500)，观察 ReportTask */
 void LedTask(void *argument)
 {
     for (;;)
     {
         HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-        HAL_Delay(500);        /* ⚠️ 实验用：会阻塞整个系统 */
+        HAL_Delay(500);        /* ⚠️ 实验用：忙等，不让出 CPU */
     }
 }
 ```
 
-观察现象：`ReportTask` 的打印**间隔会变得不稳定**（被 LED 任务拖着），甚至打印节奏明显变慢/不均匀。
-
-改回 `vTaskDelay` 后恢复正常。
+观察现象：`ReportTask` 的打印**间隔会变得不稳定**（被 LED 任务的时间片轮转拖着），节拍被拉长且不可预测；把 ReportTask 优先级降到 `osPriorityBelowNormal` 后，它会明显**被饿**（打印次数远低于理论值）。改回 `osDelay(500)` 后恢复正常。
 
 | 用的延时 | ReportTask 打印间隔 | 是否均匀 |
 |---|---|---|
 | `HAL_Delay(500)` | 实测 ____ ms | 否 |
-| `vTaskDelay(500ms)` | 实测 ____ ms | **是** |
+| `osDelay(500)` | 实测 ____ ms | **是** |
 
 ### 验证方法
 
 - README 里有清晰的对比说明
-- 有实验数据（换用 HAL_Delay 后打印间隔变得不均匀）
-- 能口头回答："为什么 RTOS 里不能用 HAL_Delay？"（答：不让出 CPU，会阻塞其他任务）
+- 有实验数据（换用 HAL_Delay 后打印间隔变得不均匀；降优先级后能被饿）
+- 能口头回答："为什么 RTOS 里不能用 HAL_Delay？"（答：它是忙等，不让出 CPU、占满 CPU，同级任务只能靠时间片轮转导致时序抖动，低优先级任务会被饿死）
 
 ---
 
@@ -316,7 +364,12 @@ void KeyTask(void *argument)
 创建：
 
 ```c
-osThreadId_t key_id = osThreadNew(KeyTask, NULL, NULL);
+static const osThreadAttr_t key_attr = {
+    .name       = "key",
+    .stack_size = 1024,              /* 字节 */
+    .priority   = osPriorityNormal,
+};
+osThreadId_t key_id = osThreadNew(KeyTask, NULL, &key_attr);
 ```
 
 > **注意采样周期 50ms**：按键机械抖动典型 0.5~5ms，50ms 采样本身就相当于粗去抖了。要做精细去抖可复用 P04 的状态机。
@@ -787,6 +840,113 @@ Normal 优先级已足够保证不丢；设太高反而可能饿死上报任务�
 - 每个任务的优先级都有理由（不是"随便设的"）
 - 能回答："如果把 AdcTask 优先级设成最高会怎样？"（答：可能饿死上报任务，导致队列积压丢包）
 - 能回答："为什么 MonitorTask 可以设最低？"（答：60s 才跑一次，晚点无所谓）
+
+---
+
+<a id="p09-irq"></a>
+## 把 P04 / P06 的中断搬进 FreeRTOS
+
+P04 的 EXTI 按键中断、P06 的串口接收中断，在裸机里"中断里直接改全局变量 / 打印"就行；搬进 RTOS 之后，中断里**不能再直接操作任务级的东西**（不能 `osDelay`、不能等队列、不能 `printf`），必须遵守下面三条。
+
+### 1. NVIC 优先级：数值 ≥ 5 才能在中断里调 FreeRTOS API
+
+```
+STM32F103 + CubeMX 默认：NVIC 优先级分组 = 4（4 位抢占优先级，0~15，数值越小越急）
+FreeRTOSConfig.h 默认：configMAX_SYSCALL_INTERRUPT_PRIORITY = 5
+```
+
+- FreeRTOS 用 `BASEPRI` 把"抢占优先级数值 ≥ 5"的中断挡在临界区之外，所以这些中断**可以**调用 `...FromISR` 版 API；
+- 抢占优先级数值 **0~4** 的中断**永远不会**被 FreeRTOS 屏蔽，它们**绝对不能**调用任何 FreeRTOS API（包括 `...FromISR`）；
+- 结论：**任何调用 FreeRTOS API 的 ISR，其抢占优先级数值必须 ≥ 5**（数值越大 = 优先级越低）；
+- P04 里把 EXTI 配成 **6**，就是为了满足这条规则。如果按默认 0 配，运行时要么被 `configASSERT` 抓到，要么直接静默 HardFault。
+
+| 中断 | 抢占优先级 | 能调 FreeRTOS API 吗 |
+|---|---|---|
+| SysTick | 15（最低）| 由内核 / RTOS 自己管，**不要改** |
+| EXTI（P04 按键）| 6 | ✅ 可以，用 `...FromISR` |
+| USART1（P06 串口）| 6 | ✅ 可以，用 `...FromISR` |
+| 优先级 0~4 的 ISR | 0~4 | ❌ 绝对不行 |
+
+> 配置位置：CubeMX 的 `System Core → NVIC` 里逐项设抢占优先级；`configMAX_SYSCALL_INTERRUPT_PRIORITY` 在 `FreeRTOSConfig.h` 里（CubeMX 生成的默认值 5，不要为了"调高响应速度"去改小它，除非你完全清楚后果）。
+
+### 2. 中断里只能用 `...FromISR` 版本
+
+| 场景 | 任务里用 | 中断里用 |
+|---|---|---|
+| 发消息到队列 | `osMessageQueuePut(q, &msg, 0, 0)` | `osMessageQueuePutFromISR(q, &msg, 0, &woken)` + `portYIELD_FROM_ISR(woken)` |
+| 释放信号量 | `osSemaphoreRelease(sem)` | `...FromISR` 版本（或 `xSemaphoreGiveFromISR`）|
+| 延时 | `osDelay(ms)` | ❌ 中断里绝对不能延时 |
+| 打印 | `printf(...)` | ❌ 中断里不要打印（慢、不可重入）|
+
+核心原则：**中断里只做"投递/通知"，把耗时的活留给任务**。
+
+**示例：P06 的 UART 接收回调，把收到的字节投进队列**
+
+```c
+/* 队列与接收缓冲（任务里创建/初始化） */
+osMessageQueueId_t uart_q;
+uint8_t            g_rx_byte;
+
+/* 任务侧：普通 Put，允许阻塞等待 */
+osMessageQueuePut(uart_q, &byte, 0, 0);
+
+/* 中断侧：必须用 FromISR 版本，且不能阻塞（超时只能填 0） */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance != USART1) return;
+
+    uint32_t woken = 0;
+    osMessageQueuePutFromISR(uart_q, &g_rx_byte, 0, &woken);
+
+    /* 如果有更高优先级任务因这次投递变为就绪，请求一次上下文切换 */
+    portYIELD_FROM_ISR(woken);
+
+    HAL_UART_Receive_IT(&huart1, &g_rx_byte, 1);   /* 重新挂上接收 */
+}
+```
+
+> **封装差异提醒**：`...FromISR` 是 FreeRTOS 原生风格的 API。CMSIS-RTOS2 的各家封装对它的导出情况不完全一致（有的版本只提供 `osMessageQueuePut`，而 STM32 的 FreeRTOS 封装里提供的可能是 `osMessageQueuePutFromISR`）。**如果你的工程里编译报"未定义"，就用原生版本，语义完全一样**：
+>
+> ```c
+> /* include "FreeRTOS.h"、"task.h"、"queue.h" */
+> BaseType_t woken = pdFALSE;
+> xQueueSendFromISR((QueueHandle_t)uart_q, &g_rx_byte, &woken);
+> portYIELD_FROM_ISR(woken);
+> ```
+>
+> 判断标准只有一条：**中断里绝不调用会阻塞、或会等超时的任务级 API**。
+
+### 3. 打开 configASSERT / USE_FULL_ASSERT
+
+**现象**：`configASSERT` 没定义时，在优先级 0~4 的 ISR 里调用 FreeRTOS API **不会报错**，表现为随机的死机、HardFault 或"莫名其妙的行为"——最难查的一类问题。
+
+**做法**：
+
+1. CubeMX → `Project Manager → Code Generator` 勾选 **`Enable Full Assert`**（生成 `USE_FULL_ASSERT`）；
+2. 确认 `FreeRTOSConfig.h` 里 `configASSERT` 有定义（CubeMX 默认生成的形式类似）：
+
+```c
+#define configASSERT(x)  if ((x) == 0) { taskDISABLE_INTERRUPTS(); for (;;); }
+```
+
+3. 同时把 `assert_param()` 接到你自己的死循环/打印上；出错时能停在断言处，比随机死机好查一百倍。
+
+### 验证方法
+
+- 在 `NVIC` 里能看到 EXTI / USART1 的抢占优先级都是 6
+- 故意把一个会调 FreeRTOS API 的 ISR 优先级改成 4，运行时能被 `configASSERT` 抓住（验证完改回去）
+- 串口中断投递数据 → 任务从队列取出并打印，长时间运行不乱
+- 能讲清"为什么中断里不能用 `osMessageQueuePut`（阻塞版）、只能用 `...FromISR`"
+
+### 常见问题
+
+| 现象 | 原因 | 怎么办 |
+|---|---|---|
+| 中断一触发就死机 / HardFault | ISR 里调了非 FromISR API，或优先级 < 5 | 改成 `...FromISR`；优先级改成 ≥ 5 |
+| 断言停在 `vPortValidateInterruptPriority` | ISR 抢占优先级数值太小（0~4）| 把该中断优先级改到 5~15 |
+| 中断里 `printf` 导致乱码/卡死 | 打印不可重入且耗时 | 中断里只投队列，任务里打印 |
+| 投递了但任务没反应 | 忘了 `portYIELD_FROM_ISR`（或没在任务里等队列）| 补上，并检查任务的 `osMessageQueueGet` |
+| 中断里等队列超时 | 用了阻塞版 Put / 超时非 0 | 中断里超时必须填 0 |
 
 ---
 

@@ -1,0 +1,40 @@
+本仓库采用双授权：
+
+- 文档（所有 `*.md`、`GANTT.csv`、图片与图表）：CC BY 4.0
+  https://creativecommons.org/licenses/by/4.0/deed.zh
+  你可以自由复制、分发、修改、商用，只需保留出处（本仓库地址）与作者署名。
+
+- 代码（教程中的 C 代码片段、示例工程）：MIT License
+  见下方全文。
+
+若你不确定某内容是"文档"还是"代码"，按更宽松的 MIT 处理即可。
+
+======================================================================
+MIT License
+
+Copyright (c) 2026 stomfrom
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+======================================================================
+
+第三方内容说明：
+
+- 教程中提到的 STM32 HAL 库、STM32CubeMX、Keil MDK 版权归 STMicroelectronics 与 Arm/Keil 所有。
+- SSD1306、AHT20 等器件的初始化序列与寄存器定义来自各自数据手册，按"合理使用"引用。
+- 若仓库内引入了第三方开源驱动，请在其文件头注明原项目与许可证。

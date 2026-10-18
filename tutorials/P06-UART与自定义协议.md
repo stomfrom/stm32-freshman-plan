@@ -13,7 +13,7 @@
 | 任务点 | 教程 |
 |---|---|
 | A1 串口回显 | [跳转](#p06-a1) |
-| A2 printf 重定向 | [跳转](#p06-a2) |
+| A2 分级日志封装 | [跳转](#p06-a2) |
 | A3 定义帧格式 | [跳转](#p06-a3) |
 | A4 状态机解析与应答 | [跳转](#p06-a4) |
 | A5 5 种异常输入验证 | [跳转](#p06-a5) |
@@ -59,9 +59,9 @@
 | 长度 | 1 | 后续 DATA 的字节数（0~255） |
 | 命令码 | 1 | 表示要做什么（0x01=点亮, 0x02=熄灭, 0x03=查询…) |
 | 数据 | N | 载荷，长度由上面决定 |
-| 校验 | 2 | CRC16（A 档先用单字节累加和，B1 升级） |
+| 校验 | **1** | 8 位累加和（A 档） |
 
-**完整一帧**：`AA 55 | LEN | CMD | DATA[N] | CRC`
+**完整一帧**：`AA 55 | LEN | CMD | DATA[N] | SUM`
 
 ---
 
@@ -122,22 +122,34 @@ while (1)
 ---
 
 <a id="p06-a2"></a>
-## A2 · printf 重定向
+## A2 · 分级日志封装（log_printf）
 
-**任务**：重定向 `printf` 到串口，用它打印程序运行中的关键变量，方便后续调试。
+**任务**：在 P01 的 `fputc` 重定向基础上，把日志输出封装成 `log_printf(level, fmt, ...)`（level = INFO/WARN/ERROR），输出格式统一为 `[INFO] 12.345s: xxx`，并说明为什么不直接到处 `printf`。
 
 ### 知识点
 
-`printf` 默认输出到"标准输出"，单片机没有屏幕，所以要把 `fputc`（printf 底层逐字符输出函数）**改成往串口发**。
+**`fputc` 是 printf 的"最后一公里"**：`printf` 负责把格式串和参数拼成字符流，每拼出一个字符就调用一次 `fputc`。单片机没有屏幕，所以把 `fputc` 改成往串口发，`printf` 就输出到串口了。**P01 的 B2 已经做过这一步**，这里只是在它上面再包一层，不再重复讲重定向本身。
 
 **必须勾 Use MicroLIB**：Keil 默认的标准库对单片机太重（占几十 KB Flash）。MicroLIB 是精简版。不勾会导致：
 - 编译报错 / 卡死
 - 或者 Flash 装不下
 
+**为什么不直接到处 `printf`**：
+
+| 直接 printf | 封装成 log_printf |
+|---|---|
+| 每条都自己拼前缀，格式千人千面 | 级别 + 时间戳自动加，格式统一 |
+| 想统一加时间戳，全工程搜 `printf` 逐个改 | 只改 `log_printf` 一处 |
+| 分不清哪条是错误、哪条是普通信息 | `INFO/WARN/ERROR` 一眼区分，方便过滤和统计 |
+| 后期想关掉调试输出，得逐个删 | 改一行开关，或按级别过滤 |
+
+**`...` 可变参数怎么转发**：C 语言用 `<stdarg.h>` 的 `va_list` / `va_start` / `va_end` 配合 `vprintf`，把可变参数原样交给 printf 的引擎去解析——不用自己解析格式串。
+
 ### 操作步骤
 
-1. Keil → `Options for Target`（魔术棒图标）→ `Target` 标签 → 勾选 **Use MicroLIB**
-2. 代码：
+**1. Keil → `Options for Target`（魔术棒图标）→ `Target` 标签 → 勾选 `Use MicroLIB`**
+
+**2. 确认 P01 的 `fputc` 还在**（没有就补上）：
 
 ```c
 /* USER CODE BEGIN Includes */
@@ -145,7 +157,7 @@ while (1)
 /* USER CODE END Includes */
 
 /* USER CODE BEGIN 0 */
-/* printf 重定向：printf 最终会逐字符调用 fputc */
+/* printf 的底层逐字符输出：改成发到 USART1 */
 int fputc(int ch, FILE *f)
 {
     HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 0xFFFF);
@@ -154,27 +166,85 @@ int fputc(int ch, FILE *f)
 /* USER CODE END 0 */
 ```
 
-3. 使用：
+**3. 封装分级日志**（别忘了在 `/* USER CODE BEGIN Includes */` 区补一行 `#include <stdarg.h>`）：
 
 ```c
-int voltage = 1234;
-printf("voltage=%d mV\r\n", voltage);    /* 注意 \r\n，否则串口助手不换行 */
+/* USER CODE BEGIN 0 */
+typedef enum {
+    LOG_INFO = 0,
+    LOG_WARN,
+    LOG_ERROR
+} log_level_t;
+
+static const char *log_level_str(log_level_t lv)
+{
+    switch (lv)
+    {
+    case LOG_INFO:  return "INFO";
+    case LOG_WARN:  return "WARN";
+    default:        return "ERROR";
+    }
+}
+
+/* 统一格式：[LEVEL] 12.345s: 正文
+ * 时间戳取 HAL_GetTick()（上电以来的 ms），换算成"秒.毫秒" */
+static void log_printf(log_level_t lv, const char *fmt, ...)
+{
+    uint32_t ms = HAL_GetTick();
+
+    printf("[%s] %lu.%03lus: ", log_level_str(lv),
+           (unsigned long)(ms / 1000), (unsigned long)(ms % 1000));
+
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);        /* 可变参数原样交给 printf 引擎 */
+    va_end(ap);
+
+    printf("\r\n");
+}
+/* USER CODE END 0 */
 ```
+
+**4. 用起来**：
+
+```c
+/* USER CODE BEGIN 2 */
+log_printf(LOG_INFO,  "boot OK, sysclk=%lu Hz", (unsigned long)HAL_RCC_GetHCLKFreq());
+log_printf(LOG_INFO,  "USART1 ready, baud=%lu", (unsigned long)115200);
+/* USER CODE END 2 */
+
+/* 其它地方（例如 A4 的 frame_handle 里） */
+log_printf(LOG_WARN,  "unknown cmd 0x%02X", cmd);
+log_printf(LOG_ERROR, "checksum error");
+```
+
+串口上看到：
+
+```
+[INFO] 0.123s: boot OK, sysclk=72000000 Hz
+[INFO] 0.124s: USART1 ready, baud=115200
+[WARN] 3.201s: unknown cmd 0x7F
+[ERROR] 5.480s: checksum error
+```
+
+> **注意**：`log_printf` 内部仍是逐字符阻塞发送（`fputc` 是阻塞的），一行十几二十字节在 115200 下约 1~2ms。**别在高频中断里调用它**；中断里只置标志/累加计数，打印留给主循环。
 
 ### 验证方法
 
-- 串口助手能看到格式化输出（不只是单个字符）
-- 能打印整数、字符串、多个参数
-- 换行正常（`\r\n` 要写全，只写 `\n` 在很多串口助手里不换行）
+- 串口助手能看到 `[INFO] 12.345s: xxx` 这种统一格式（级别、时间戳、正文都在）
+- 三种级别各调用一次，前缀分别显示 `[INFO]` / `[WARN]` / `[ERROR]`
+- 能说出至少两条"为什么不直接到处 printf"的理由
 
 ### 常见问题
 
 | 现象 | 原因 | 怎么办 |
 |---|---|---|
 | 编译报 `__use_no_semihosting` 类错误 | 没勾 Use MicroLIB | 勾上 |
-| 程序卡死 | `fputc` 里用了超时太长，或时钟/串口没初始化 | 确认初始化顺序 |
+| 程序卡死 | `fputc` 里超时太长，或时钟/串口没初始化 | 确认初始化顺序 |
 | 输出不换行 | 只写了 `\n` | 改成 `\r\n` |
 | 中文乱码 | 串口助手编码不对 | 设为 UTF-8 |
+| 编译报 `va_list` / `vprintf` 未定义 | 没加 `#include <stdarg.h>` / `<stdio.h>` | 两个都加上 |
+| 时间戳一直不动 | `HAL_GetTick()` 依赖 SysTick，`HAL_Delay` 卡死时也停 | 检查 SysTick 配置 |
 
 ---
 
@@ -271,6 +341,10 @@ static rx_state_t s_state = ST_HEAD1;
 static uint8_t    s_len, s_cmd, s_data[FRAME_MAX_DATA], s_idx, s_sum;
 static uint32_t   s_last_byte_tick = 0;
 
+/* 前置声明：frame_feed 里会调用 frame_handle，而 frame_handle 定义在后面，
+ * 没有这一行 GCC/ARMCC 会报 implicit declaration（C99 下是错误） */
+static void frame_handle(uint8_t cmd, const uint8_t *data, uint8_t len);
+
 /* 每收到一个字节调用一次 */
 void frame_feed(uint8_t b)
 {
@@ -309,9 +383,11 @@ void frame_feed(uint8_t b)
 }
 
 /* 处理有效帧 */
-void frame_handle(uint8_t cmd, const uint8_t *data, uint8_t len)
+static void frame_handle(uint8_t cmd, const uint8_t *data, uint8_t len)
 {
     uint8_t resp[8]; uint16_t n = 0;
+
+    (void)data; (void)len;               /* 本档的应答不带数据，避免编译警告 */
 
     switch (cmd)
     {
@@ -422,10 +498,28 @@ if (s_state != ST_HEAD1 && (HAL_GetTick() - s_last_byte_tick) > 100)
 
 **⚠️ 四个参数任意一个不同，校验就永远失败**——所以必须写进协议文档。
 
+**升级到 v2 后的帧格式**（只有校验字段变长）：
+
+| 字段 | 字节数 | 说明 |
+|---|---|---|
+| 帧头 | 2 | 固定 `0xAA 0x55` |
+| 长度 | 1 | DATA 字节数 |
+| 命令码 | 1 | 见 A3 的命令码表 |
+| 数据 | N | 载荷 |
+| 校验 | **2** | CRC16-MODBUS（低字节在前） |
+
+> **⭐ 版本约定（重要）**：协议里必须带**版本号字段**，v1 与 v2 的校验字段长度不同，靠版本号区分；B5 的周期上报帧要用 v2，否则与 B1 之后的对端对不上。
+>
+> 本教程 A 档（v1，单字节累加和）到 B1（v2，2 字节 CRC16）是**同一个工程的前后两版**，不会同时挂在一条总线上，所以示例帧没有单独占一个版本字节；**一旦要新旧版本混跑，就必须在帧里显式加 1 字节版本号（0x01=v1，0x02=v2），并在做校验前先读它**，决定按几个字节校验。
+
+**CRC 覆盖范围**：从**长度字段**开始，到 DATA 最后一个字节结束（不含帧头、不含 CRC 自身）。范围两端必须一致。
+
 ### 操作步骤
 
+**1. CRC16-MODBUS 计算函数**：
+
 ```c
-/* CRC16-MODBUS（表驱动或逐位计算） */
+/* CRC16-MODBUS（逐位计算，参数见上表） */
 static uint16_t crc16_modbus(const uint8_t *data, uint16_t len)
 {
     uint16_t crc = 0xFFFF;
@@ -442,32 +536,81 @@ static uint16_t crc16_modbus(const uint8_t *data, uint16_t len)
 }
 ```
 
-改造接收状态机：`ST_SUM` 拆成 `ST_CRC_LO` / `ST_CRC_HI` 两态（收 2 字节）：
+**2. 发送侧同步升级**：把 A3 的 `frame_build` 里那段单字节累加和换成 2 字节 CRC（低字节在前）：
+
+```c
+/* B1 起：发送侧用 v2 组帧 */
+uint16_t frame_build(uint8_t *buf, uint8_t cmd, const uint8_t *data, uint8_t len)
+{
+    uint16_t i = 0;
+    buf[i++] = FRAME_HEAD1;
+    buf[i++] = FRAME_HEAD2;
+    buf[i++] = len;
+    buf[i++] = cmd;
+    for (uint8_t k = 0; k < len; k++) buf[i++] = data[k];
+
+    uint16_t crc = crc16_modbus(&buf[2], 2 + len);   /* 长度+命令+数据 */
+    buf[i++] = (uint8_t)(crc & 0xFF);                 /* 低字节先发 */
+    buf[i++] = (uint8_t)(crc >> 8);
+    return i;
+}
+```
+
+**3. 接收侧：`ST_SUM` 拆成 `ST_CRC_LO` / `ST_CRC_HI`**
+
+先把 A4 的枚举最后一项 `ST_SUM` 换成两态：
+
+```c
+typedef enum {
+    ST_HEAD1 = 0, ST_HEAD2, ST_LEN, ST_CMD, ST_DATA, ST_CRC_LO, ST_CRC_HI
+} rx_state_t;
+```
+
+再补三个静态变量（A4 里没有）：
+
+```c
+static uint16_t s_crc_rx  = 0;                 /* 收到的 CRC（小端拼装） */
+static uint32_t s_crc_err = 0;                 /* CRC 错误计数 */
+static uint8_t  s_crc_buf[2 + FRAME_MAX_DATA]; /* 长度+命令+数据，拼起来算 CRC */
+```
+
+然后改状态机：**原来所有 `s_state = ST_SUM;` 都改成 `s_state = ST_CRC_LO;`**，并加上这两态：
 
 ```c
 case ST_CRC_LO:
-    s_crc_rx = b;
-    s_state = ST_CRC_HI;
+    s_crc_rx = b;                              /* 低字节先来 */
+    s_state  = ST_CRC_HI;
     break;
 
 case ST_CRC_HI:
 {
-    s_crc_rx |= ((uint16_t)b << 8);           /* 小端：低字节先来 */
-    uint16_t calc = crc16_modbus(&s_frame[2], 2 + s_len);  /* 从长度字段开始算 */
-    if (calc == s_crc_rx) { frame_handle(s_cmd, s_data, s_len); }
-    else { s_crc_err++; printf("CRC ERR total=%lu\r\n", (unsigned long)s_crc_err); }
+    s_crc_rx |= ((uint16_t)b << 8);            /* 高字节 */
+
+    /* 把"长度+命令+数据"拼进连续数组，从长度字段开始算 CRC */
+    s_crc_buf[0] = s_len;
+    s_crc_buf[1] = s_cmd;
+    for (uint8_t k = 0; k < s_len; k++) s_crc_buf[2 + k] = s_data[k];
+
+    if (crc16_modbus(s_crc_buf, 2 + s_len) == s_crc_rx)
+    {
+        frame_handle(s_cmd, s_data, s_len);
+    }
+    else
+    {
+        s_crc_err++;
+        log_printf(LOG_ERROR, "CRC ERR total=%lu", (unsigned long)s_crc_err);
+    }
     s_state = ST_HEAD1;
     break;
 }
 ```
-
-（需要把"长度+命令+数据"拼进一个连续数组再算 CRC，或用支持分段的 CRC 实现。）
 
 ### 验证方法
 
 - 正常帧通过校验
 - 故意改 CRC 一个字节 → 打印 CRC 错误且**错误计数递增**
 - 与在线 CRC 计算器比对，确认你的实现对得上（这一步能快速验证参数是否一致）
+- 用 v2 帧 `AA 55 00 01 C0 70` 发 `LED_ON`，能正常点亮（其中 `C0 70` 是 `00 01` 的 CRC16-MODBUS，低字节 `C0` 在前）
 
 ### 常见问题
 
@@ -476,6 +619,7 @@ case ST_CRC_HI:
 | 所有帧都校验失败 | CRC 参数与对端不一致 | 用在线计算器比对同一串数据 |
 | 只对短帧有效 | CRC 计算范围（从哪字节到哪字节）不一致 | 明确写进文档 |
 | 字节序反了 | 大小端不一致 | 小端=低字节先发，核对 |
+| 发了正常帧仍报 CRC 错 | 发送侧还是 v1 的单字节累加和 | 发送、接收要同时升到 v2 |
 
 ---
 
@@ -498,14 +642,22 @@ case ST_CRC_HI:
 
 **竞态问题**：中断里动写指针，主循环动读指针。如果主循环读指针更新时被打断，可能出错。单生产者单消费者场景下，**只要保证指针操作是原子的**（16 位对齐读写），一般安全。
 
+**⭐ `HAL_UART_Receive_IT` 是"一次性挂载"**：它只挂**一次**、收 1 个字节，然后进回调。每接收完一次，要在回调里重新挂；**初始化时如果不挂第一次，接收永远不会开始**。这是 P06 最常见的"代码全对但一个字节都收不到"。
+
 ### 操作步骤
+
+**1. 环形缓冲与接收回调**（`/* USER CODE BEGIN 0 */`）：
 
 ```c
 #define RB_SIZE 128            /* 必须是 2 的幂，便于用 & 取模 */
 
 static volatile uint8_t  rb_buf[RB_SIZE];
-static volatile uint16_t rb_head = 0;   /* 写指针（仅中断改） */
-static volatile uint16_t rb_tail = 0;   /* 读指针（仅主循环改） */
+static volatile uint16_t rb_head = 0;          /* 写指针（仅中断改） */
+static volatile uint16_t rb_tail = 0;          /* 读指针（仅主循环改） */
+
+/* 这两个变量 B2 必须显式声明（A4/B1 里没有） */
+static uint8_t           g_rx_tmp;             /* 中断接收的单字节落点 */
+static volatile uint32_t s_rb_overflow = 0;    /* 环形缓冲溢出次数 */
 
 /* 入队（中断里调用） */
 static inline void rb_put(uint8_t b)
@@ -534,14 +686,93 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 ```
 
-主循环：
+**2. 主循环启动前必须先挂第一次接收**（`/* USER CODE BEGIN 2 */`）：
+
+```c
+/* USER CODE BEGIN 2 */
+/* ⭐ 不写这一句，回调永远不会被触发，一个字节都收不到 */
+HAL_UART_Receive_IT(&huart1, &g_rx_tmp, 1);
+/* USER CODE END 2 */
+```
+
+**3. 主循环**：
 
 ```c
 uint8_t b;
-while (rb_get(&b)) frame_feed(b);    /* 把缓冲区里的字节喂给状态机 */
+while (1)
+{
+    /* USER CODE BEGIN WHILE */
+    while (rb_get(&b)) frame_feed(b);    /* 把缓冲区里的字节喂给状态机 */
+    /* USER CODE END WHILE */
+}
 ```
 
-**关键**：`HAL_UART_RxCpltCallback` 里**必须重新调用 `HAL_UART_Receive_IT`**，否则只会收到一个字节就停了。
+**4. 统计（做 100 帧测试要记数）**——在 `/* USER CODE BEGIN 0 */` 里补一个成功帧计数，并在 `frame_handle()` 开头加一句 `s_ok_cnt++;`：
+
+```c
+static volatile uint32_t s_ok_cnt = 0;   /* 校验通过、已处理的帧数 */
+/* frame_handle() 的第一行：s_ok_cnt++; */
+```
+
+再在 `/* USER CODE BEGIN 0 */` 里加一个统计时刻变量，在主循环里每秒打印一次统计（测试完可以删）：
+
+```c
+/* USER CODE BEGIN 0 */
+static uint32_t t_stat = 0;
+/* USER CODE END 0 */
+
+/* 主循环里 */
+if (HAL_GetTick() - t_stat >= 1000)
+{
+    t_stat = HAL_GetTick();
+    log_printf(LOG_INFO, "ok=%lu overflow=%lu crc_err=%lu",
+               (unsigned long)s_ok_cnt,
+               (unsigned long)s_rb_overflow,
+               (unsigned long)s_crc_err);
+}
+```
+
+### 上位机怎么循环发 100 帧
+
+**方式 ①：串口助手「定时发送」+ 十六进制**
+
+1. 打开「十六进制发送」
+2. 发送内容填一帧 v2 的 `LED_ON`：`AA 55 00 01 C0 70`
+3. 勾选「定时发送」，间隔 **20ms**
+4. 点发送，让它自己跑 2 秒（100 帧 × 20ms = 2s），然后停止
+5. 看主循环打印的 `ok=` 是否到 100、`overflow=0`、`crc_err=0`
+
+**方式 ②：Python 脚本循环发（推荐做压力测试）**
+
+```python
+# pip install pyserial
+import serial, time
+
+def crc16(data: bytes) -> int:              # CRC16-MODBUS，与单片机同一套参数
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
+
+def build(cmd: int, payload: bytes = b"") -> bytes:
+    body = bytes([len(payload), cmd]) + payload        # LEN + CMD + DATA
+    c = crc16(body)
+    return b"\xAA\x55" + body + bytes([c & 0xFF, c >> 8])   # 低字节在前
+
+PORT = "COM3"          # 改成你的串口：Windows 如 COM3，Linux 如 /dev/ttyUSB0
+with serial.Serial(PORT, 115200, timeout=0.2) as ser:
+    for _ in range(100):
+        ser.write(build(0x01))         # 0x01 = LED_ON
+        ser.flush()
+        time.sleep(0.02)               # 20ms 一帧，100 帧约 2 秒
+    print("sent 100 frames")
+```
+
+跑完在串口助手/单片机日志里核对：`ok=100`、`overflow=0`、`crc_err=0`。
+
+> 想测"丢包"就把 `time.sleep(0.02)` 改小（比如 0.002）——波特率 115200 下一帧 6 字节约 0.5ms，发太快才会真的溢出；**溢出计数涨了说明环形缓冲起作用了（真的丢），不涨说明处理跟得上**。
 
 ### 验证方法
 
@@ -622,7 +853,7 @@ while (rb_get(&b)) frame_feed(b);    /* 把缓冲区里的字节喂给状态机 
 写一份 `PROTOCOL.md`（放进交付物），结构照抄：
 
 ```markdown
-# 通信协议说明 v1.0
+# 通信协议说明 v2.0
 
 ## 1. 物理层
 - 接口：UART，115200-8-N-1
@@ -681,6 +912,8 @@ while (rb_get(&b)) frame_feed(b);    /* 把缓冲区里的字节喂给状态机 
 - **周期固定**（比如每秒一帧），方便上位机做超时判断
 - **不能阻塞**：上报要用非阻塞方式发（或用中断/DMA 发送），否则会拖住主循环
 
+**版本提醒**：B5 的周期上报帧必须用 **v2**（2 字节 CRC16）组帧，也就是 B1 升级后的 `frame_build`。用回 A3 的 v1 版本会与 B1 之后的对端对不上。
+
 ### 操作步骤
 
 用 P05 的 1ms tick 做周期：
@@ -706,8 +939,8 @@ while (1)
         payload[4] = (HAL_GPIO_ReadPin(LED_GPIO_Port, LED_Pin) == GPIO_PIN_RESET) ? 1 : 0;
 
         uint8_t frame[16];
-        uint16_t n = frame_build(frame, 0x10, payload, 5);   /* 0x10 = 状态上报 */
-        uart_port_send(frame, n);
+        uint16_t n = frame_build(frame, 0x10, payload, 5);   /* 0x10 = 状态上报，B1 之后自动是 v2 */
+        HAL_UART_Transmit(&huart1, frame, n, 100);           /* B3 分层后换成 uart_port_send(frame, n) */
     }
 
     /* 同时照常处理接收 */
@@ -724,6 +957,7 @@ while (1)
 - 帧里的运行秒数随时间递增、与实际情况吻合
 - LED 状态变化后，下一帧上报的值跟着变
 - **主动上报不影响命令应答**（发命令照样立刻回）
+- 用 C 或 Python 里独立的 CRC 校验一下上报帧，确认是 v2 的 2 字节 CRC（对不上就说明 `frame_build` 还是 v1）
 
 ---
 
@@ -736,6 +970,7 @@ while (1)
 | **降波特率到 9600 再测** | 若变正常，说明是处理速度问题不是协议逻辑问题 |
 | **给每类异常配计数器** | 跑一段时间看哪类错误在涨，比单步调试快得多 |
 | **先自发自收（回环）** | TX 与 RX 短接，先验证收发链路再联调 |
+| **没有逻辑分析仪时** | 用串口把每个字节的接收状态机迁移打印出来（`ST_HEAD2 → ST_LEN → ST_CMD → ST_DATA → ST_CRC_HI`），比抓波形更直观：能直接看到"卡在哪一态" |
 
 ---
 

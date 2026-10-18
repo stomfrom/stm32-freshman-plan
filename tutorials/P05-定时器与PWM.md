@@ -54,6 +54,24 @@
 
 **重要**：APB1 的定时器时钟是 **72MHz**（F103 在 APB1 分频不为 1 时，定时器时钟是 APB1 时钟的 2 倍，默认配置下就是 72MHz）。算参数前先确认这一点，否则频率会差好几倍。
 
+### 0.3 定时器 / 通道资源分配表（本教程**始终遵守**）
+
+P05 一共只有 TIM2/TIM3/TIM4 三个通用定时器、每定时器 4 个通道可用，通道和定时器都是**稀缺资源**。**动手做任何一条任务之前，先看这张表**，并按表分配：
+
+| 用途 | 定时器 | 通道 | 引脚 | 说明 |
+|---|---|---|---|---|
+| 1ms 时基 | TIM2 | — | — | PSC=71, ARR=999（72MHz/(72*1000)=1ms） |
+| 呼吸灯 PWM | TIM3 | CH1 | PA6 | 1kHz（PSC=71, ARR=999） |
+| 电机调速 PWM | TIM3 | CH2 | PA7 | **与呼吸灯共用 TIM3 的 ARR，只能同频 1kHz**（PSC=71, ARR=999）；想跑 10kHz 见 B4（换 TIM4 CH2） |
+| 舵机 PWM | TIM4 | CH1 | PB6 | 50Hz（PSC=71, ARR=19999） |
+| 输入捕获 | TIM4 | CH2 | PB7 | 与舵机**二选一**，做 B3 时先释放 |
+
+> 表里两处"看起来自相矛盾"的地方，先讲清楚，后面会反复用到：
+> 1. **TIM3 的 CH1（呼吸灯）与 CH2（电机）共用同一个 ARR，所以只能同频**。本表的默认分配是 **1kHz**（PSC=71, ARR=999），呼吸灯与电机同时跑 1kHz——电机 1kHz 会有轻微可听啸叫，但功能完全正常。想跑 10kHz（更安静）就必须**换定时器**：见 B4，用 TIM4 CH2 跑 10kHz（此时 TIM4 的舵机/输入捕获要先释放）。**同一个定时器不可能同时跑两个频率**，这是硬件结构决定的。
+> 2. **舵机（TIM4 CH1）与输入捕获（TIM4 CH2 / PB7）是二选一**：TIM4 被其中一条独占，做 B3 前先把 B1 的舵机 PWM 释放掉。另外，B3 统一改用 **PWM Input 模式**（信号从 TIM4_CH1/PB6 进），表里的 PB7 是"普通捕获（direct capture）"的写位。
+>
+> 另外，0.2 的两行只是入门示意，**以本表为准**。后续每个 B 档任务的开头都有一行"本条占用哪路资源、和前面哪条冲突"，请照那一行操作。
+
 ---
 
 <a id="p05-a1"></a>
@@ -231,6 +249,8 @@ CNT >= CCR  → 输出低电平
 > - **做法 2**：保持 LED 在 PC13，用**软件 PWM**（定时器中断里自己数数控制 PC13）
 >
 > 下面给**做法 1**（标准做法，也是 B 档要用的）；做法 2 见 B5 的变体说明。
+>
+> **外接 LED 的明确接线（做法 1）**：板载 LED 焊在 PC13，而 **PC13 没有任何定时器通道**，做不了 PWM。做法：**PA6 → 1kΩ → LED 阳极，LED 阴极 → GND**（板载 PC13 灯保持不动，只作对照）。LED 与 1kΩ 已列入采购清单第 1 批。
 
 ### 操作步骤（做法 1）
 
@@ -246,7 +266,7 @@ CNT >= CCR  → 输出低电平
    | `Pulse (CCR)` | **0**（初始占空比 0） |
 
 4. `GENERATE CODE`
-5. 硬件：把 LED（+ 限流电阻，约 1kΩ）接到 **PA6**，另一端接 GND。（若你的板子 LED 焊死在 PC13，见上面做法 2）
+5. 硬件：按上面「外接 LED 的明确接线」接好——PA6 → 1kΩ → LED 阳极，LED 阴极 → GND，LED 直接跨在 PA6 与 GND 之间（若你的板子 LED 焊死在 PC13，见上面做法 2）
 6. 代码：
 
 ```c
@@ -323,6 +343,16 @@ while (1)
 
 **验收**：频率偏差 ≤5%，占空比偏差 ≤3%。
 
+### 没有示波器时的自测法
+
+没有示波器也能验收 A4，用"自己测自己"的办法：
+
+1. 用**另一路定时器**（如 TIM4 CH2 / PB7）配输入捕获，测自己输出的 PWM：PA6（TIM3 CH1 输出）用杜邦线接到 PB7（TIM4 CH2 捕获）。读周期与高电平时间，即可算出频率与占空比（做法见 B3；若用 direct capture，需要两次捕获求差）。
+2. 或者用**已知的 5V 方波信号源**（信号发生器 / 函数发生器）自检测量链路：先测已知频率的方波，确认换算公式对不对，再去测自己的 PWM。
+3. 注意：**万用表只能测平均电压，测不出频率与占空比**（PWM 平均电压 = 3.3V × 占空比，只能当粗略旁证）。
+
+> 若确实没有示波器，**需向指导人申请改用该自测法的验收方式**（在 README 里写明自测方法，附上实测周期 / 脉宽与换算过程），不能直接跳过 A4。
+
 ### 常见问题
 
 | 现象 | 原因 | 怎么办 |
@@ -337,7 +367,7 @@ while (1)
 <a id="p05-a5"></a>
 ## A5 · 整理定时器参数
 
-**任务**：把定时器参数（预分频值、自动重装值、目标频率）写成注释或结构体，说明每个值是怎么算出来的。
+**任务**：把定时器参数（预分频值、自动重装值、目标频率、所属定时器与通道）写成注释或结构体，说明每个值是怎么算出来的。
 
 ### 知识点
 
@@ -354,32 +384,50 @@ while (1)
  *
  * TIM2  目标 1ms   → (PSC+1)(ARR+1)=72000  → PSC=71, ARR=999
  * TIM3  目标 1kHz PWM → (PSC+1)(ARR+1)=72000 → PSC=71, ARR=999
+ * TIM4  目标 50Hz 舵机 → (PSC+1)(ARR+1)=1440000 → PSC=71, ARR=19999
  *       占空比 = CCR / (ARR+1)
+ * 注意：同一定时器的所有通道共用 PSC/ARR，不同频率必须换定时器。
  * ============================================== */
 typedef struct {
-    const char *name;
+    const char *name;        /* 用途名，便于打印自证 */
+    const char *tim;         /* 所属定时器 */
+    uint32_t    channel;     /* 所属通道（时基类没有通道，填 0） */
     uint32_t    psc;
     uint32_t    arr;
-    uint32_t    target_hz;      /* 目标频率（中断用周期换算） */
+    uint32_t    target_hz;   /* 目标频率（中断用周期换算） */
 } tim_cfg_t;
 
 static const tim_cfg_t g_tim_cfg[] = {
-    { "TIM2_1ms", 71, 999, 1000  },   /* 1ms → 1000Hz */
-    { "TIM3_PWM", 71, 999, 1000  },   /* 1kHz PWM    */
+    /* 名称           定时器    通道               PSC   ARR     目标频率 */
+    { "TIM2_1ms",   "TIM2",  0,                    71,   999,    1000 },  /* 1ms 时基 → 1000Hz */
+    { "TIM3_LED",   "TIM3",  TIM_CHANNEL_1,        71,   999,    1000 },  /* 呼吸灯 1kHz */
+    { "TIM4_SERVO", "TIM4",  TIM_CHANNEL_1,        71,   19999,    50 },  /* 舵机 50Hz */
 };
 ```
 
-并写一段验证：程序里用 `HAL_RCC_GetPCLK1Freq()` 读出实际总线频率并打印，佐证公式里的 72MHz。
+并写一段验证：打印 `SystemCoreClock`（应为 72000000），并打印 `HAL_RCC_GetPCLK1Freq()*2`（APB1 定时器时钟）。注意：`HAL_RCC_GetPCLK1Freq()` 本身是 **36MHz**，别拿它直接当定时器时钟，否则会以为时钟树配错了。
+
+```c
+/* USER CODE BEGIN 2 */
+printf("SystemCoreClock    = %lu Hz\r\n", (unsigned long)SystemCoreClock);              /* 应为 72000000 */
+printf("APB1 timer clock   = %lu Hz\r\n", (unsigned long)(HAL_RCC_GetPCLK1Freq() * 2U)); /* 应为 72000000 */
+/* USER CODE END 2 */
+```
+
+**为什么 `HAL_RCC_GetPCLK1Freq()` 是 36MHz**：默认时钟树是 SYSCLK=72MHz、AHB=72MHz、**APB1 分频=2 → PCLK1=36MHz**；F103 规定"APB1 分频系数不为 1 时，挂在其上的定时器时钟 = PCLK1 × 2"，所以定时器时钟 = 36 × 2 = 72MHz。**`HAL_RCC_GetPCLK1Freq()` 返回的是 36MHz（总线时钟），不是定时器时钟**——拿它直接去算 PSC/ARR 会得到双倍的频率误差。
 
 ### 验证方法
 
 - 能照着注释手算出 PSC/ARR，并解释为什么这么分
 - 评审时被问"如果把 PWM 改成 2kHz 怎么改"能立刻答出（ARR 改成 499 即可）
+- 能讲清"为什么 `HAL_RCC_GetPCLK1Freq()` 打印出来是 36MHz，而公式里用 72MHz"
 
 ---
 
 <a id="p05-b1"></a>
 ## B1 · PWM 控制舵机
+
+> **本条占用**：TIM4 · CH1 · **PB6**（50Hz）。**冲突提醒**：TIM4 同时是 B3 输入捕获要用的定时器（TIM4 CH1/CH2，**二选一**）；与 A3 的 TIM3 无关。做 B1 时不要同时开 B3。
 
 **任务**：用 PWM 控制一个舵机，让它依次转到 0°、90°、180° 三个位置，用示波器测出每个位置对应的脉宽。
 
@@ -415,8 +463,8 @@ static const tim_cfg_t g_tim_cfg[] = {
 ### 操作步骤
 
 1. **硬件供电很关键**：舵机**不要用开发板的 3.3V 或 5V 引脚直接供电**（启动电流会拉垮电源导致单片机复位）。用独立 5V 电源，**并且与开发板共地**。
-2. CubeMX 改 TIM3 参数：`PSC=71`、`ARR=19999`（若和 A3 共用 TIM3，可另开 TIM4 专门驱动舵机，参数同上）
-3. 信号线接舵机（橙/黄线），电源线接独立 5V，地线共地
+2. CubeMX 按资源分配表配 **TIM4 CH1**（PB6，舵机专用）：`PSC=71`、`ARR=19999`（50Hz，1 个计数 = 1μs）。**不要**把 50Hz 塞进 TIM3——TIM3 是 A3 的呼吸灯（1kHz，ARR=999），一改 ARR 呼吸灯就废了，而且同一定时器的通道只能同频。
+3. 信号线接舵机（橙/黄线）→ **PB6**，电源线接独立 5V，地线共地
 4. 代码：
 
 ```c
@@ -425,12 +473,12 @@ static const tim_cfg_t g_tim_cfg[] = {
 #define SERVO_90DEG  1500     /* 1.5ms */
 #define SERVO_180DEG 2500     /* 2.5ms */
 
-HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
 
 /* 依次转到三个位置，每个停 1 秒 */
 uint16_t angles[] = { SERVO_0DEG, SERVO_90DEG, SERVO_180DEG };
 for (int i = 0; i < 3; i++) {
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, angles[i]);
+    __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, angles[i]);
     printf("angle step %d, pulse=%u us\r\n", i, angles[i]);
     HAL_Delay(1000);
 }
@@ -450,6 +498,16 @@ for (int i = 0; i < 3; i++) {
 - 重复来回 10 次不跑偏、不抖动
 - 示波器实测脉宽与理论值偏差 ≤5%
 
+### 没有示波器时的自测法
+
+舵机信号只有一根线（PB6），也可以不用示波器验收：
+
+1. 用**另一路定时器的输入捕获**测自己输出的 PWM：本条已占用 TIM4 CH1，可临时用 TIM1 CH1（PA8）配输入捕获（PSC=71 → 1 个计数 = 1μs），把 PB6 的信号同时接到 PA8，读 CCR1 就是高电平微秒数。测完把 TIM1 释放（不列入 0.3 资源表）。
+2. 或用**已知的 5V 方波信号源**自检测量链路：先测一个已知脉宽的方波，确认换算对，再去测舵机信号。
+3. 注意：**万用表只能测平均电压，测不出频率与占空比**（50Hz、1.5ms 的舵机信号平均电压约 0.25V，只能判断"有没有输出"，判断不了脉宽对不对）。
+
+> 若确实没有示波器，**需向指导人申请改用该自测法的验收方式**（在 README 里写明自测方法与实测脉宽），不能直接跳过 B1 的脉宽测量。
+
 ### 常见问题
 
 | 现象 | 原因 | 怎么办 |
@@ -463,6 +521,8 @@ for (int i = 0; i < 3; i++) {
 
 <a id="p05-b2"></a>
 ## B2 · PWM 驱动电机 3 档调速
+
+> **本条占用**：TIM3 · CH2 · **PA7**（1kHz，与 A3 呼吸灯共用 TIM3 的 ARR，所以天然同频）。**冲突提醒**：TIM3 只有一个 ARR，你不能让 CH1 跑 1kHz 同时 CH2 跑 10kHz。要么就按本条的 **1kHz** 做（最简单，推荐），要么按 B4 的办法把电机换到 **TIM4 CH2** 跑 10kHz（此时 TIM4 的舵机/输入捕获要先释放）。
 
 **任务**：用 PWM 驱动直流电机或小风扇实现 3 档调速（慢/中/快），在串口上用命令切换档位。
 
@@ -487,12 +547,14 @@ for (int i = 0; i < 3; i++) {
 ### 操作步骤
 
 1. 搭好驱动电路（MOS 管 + 续流二极管 + 栅极电阻；或用成品驱动模块）
-2. PWM 用 **10kHz 左右**（太低会有可听噪声，太高开关损耗大）：
+2. 通道用 **TIM3 CH2（PA7）**，沿用 A3 的定时器参数即可（**不改 ARR**）：
 
 ```
-(PSC+1)(ARR+1) = 72,000,000 / 10,000 = 7200
-取 PSC=71, ARR=99   → 10kHz
+TIM3 已在 A3 配好：PSC=71, ARR=999 → 1kHz
+本条不新增定时器，只改 CCR2（占空比）
 ```
+
+> 想用电机的"安静频段" 10kHz？那必须换定时器（TIM3 的 ARR 改了呼吸灯就跟着变），完整做法见 **B4**。初学者先按 1kHz 做完本条，功能完全一样，只是电机会有轻微可听啸叫。
 
 3. 串口命令切换档位（配合 P06 的协议或简单字符串比较）：
 
@@ -505,7 +567,7 @@ void set_speed(uint8_t level)     /* level: 0~2 */
     if (level > 2) return;
     speed_level = level;
     uint16_t ccr = (uint32_t)speed_table[level] * (99 + 1) / 100;   /* ARR+1=100 */
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, ccr);
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, ccr);              /* 电机在 CH2！ */
     printf("speed = %u%%\r\n", speed_table[level]);
 }
 ```
@@ -515,7 +577,7 @@ void set_speed(uint8_t level)     /* level: 0~2 */
 ### 验证方法
 
 - 三档转速肉眼可辨（慢/中/快差明显）
-- 用示波器量占空比，与设定百分比吻合
+- 用示波器量占空比，与设定百分比吻合（无示波器时见 A4 的自测法）
 - 电机启动时单片机不复位（说明供电与续流处理到位）
 
 ---
@@ -523,47 +585,89 @@ void set_speed(uint8_t level)     /* level: 0~2 */
 <a id="p05-b3"></a>
 ## B3 · 输入捕获测频
 
+> **本条占用**：TIM4 · CH1/CH2 · 信号接 **PB6**（**PWM Input 模式**，CH1 测周期、CH2 测脉宽，一条线进去、两个通道各测一个数）。**冲突提醒**：TIM4 CH1 正是 B1 舵机用的通道，**舵机与输入捕获二选一**，做 B3 前先把舵机 PWM 停掉、释放 TIM4。资源表里"输入捕获 / TIM4 CH2 / PB7"那一行是 direct capture（普通捕获）的写位，本教程统一改用 PWM Input 模式，所以信号只接 PB6 一根线。
+
 **任务**：用定时器的输入捕获功能测一个外部方波信号的频率，把测量值与信号源设定值对比，记录误差。
 
 ### 知识点
 
-**输入捕获干什么**：硬件在检测到边沿时，**自动把当前计数器值存进捕获寄存器**。连续捕获两次就能算出信号周期：
+**输入捕获干什么**：硬件在检测到边沿时，**自动把当前计数器值存进捕获寄存器**。
+
+**本任务统一用 PWM Input 模式（一条信号线同时测周期和脉宽）**：
 
 ```
-周期 = (第二次捕获值 - 第一次捕获值) / 计数频率
-频率 = 1 / 周期
+          上升沿                 下降沿            上升沿
+信号：  ──┐      ┌──────────────┐        ┌──────
+          └──────┘              └────────┘
+          ↑                      ↑
+       CH1 捕获（上升沿）      CH2 捕获（下降沿）
+       从模式 Reset：上升沿把 CNT 清零
+       → CCR1 = 一个完整周期     → CCR2 = 高电平时间（脉宽）
 ```
 
-**两种捕获方式**：
-- **PWM 输入模式**：自动测周期，适合测频率
-- **普通捕获**：手动读 CCR，适合测脉宽
+CubeMX 里把 `Channel1` 选成 **`PWM Input on CH1`** 时，HAL 会自动完成三件事：
+
+1. `TI1` 同时接到 **IC1（上升沿）** 和 **IC2（下降沿）**；
+2. 从模式（Slave Mode）设为 **Reset**：每次上升沿硬件把 CNT 清零；
+3. 触发源设为 `TI1FP1`。
+
+对 1MHz 计数（PSC=71，1 个计数 = 1μs）：
+
+```
+周期(μs)  = CCR1 + 1      /* 从模式 Reset 下 CNT 从 0 数到捕获值后被清，故 +1 */
+脉宽(μs)  = CCR2 + 1
+频率(Hz)  = 1,000,000 / 周期(μs)
+占空比    = 脉宽 / 周期
+```
+
+> **口径说明（原文这里容易看串）**：PWM Input 模式下，"周期"是 **CH1 的捕获值**（因为清零点也在上升沿），"脉宽"是 **CH2 的捕获值**——**不是**"CCR1 直接当周期再拿 CCR2 当别的什么"。两个通道各负责一个量，缺一不可。
+
+**如果你坚持用 direct capture（普通捕获）**：那就不能"一次捕获读周期"，必须在**同一信号的两个上升沿**各捕获一次，再求差：
+
+```c
+/* 16 位计数器，用取模自动处理回绕，不要直接相减 */
+uint16_t cap1 = 0, cap2 = 0;          /* cap1 是上一次上升沿，cap2 是这一次 */
+uint16_t period = (cap2 - cap1 + 65536) % 65536;   /* 单位：1μs */
+```
 
 ### 操作步骤
 
-1. CubeMX 配 **TIM4**（或空闲定时器）：
-   - `Channel1` → **`Input Capture direct mode`**（引脚如 PB6）
+1. CubeMX 配 **TIM4**（资源表规定输入捕获用 TIM4，做本条前先释放 B1 的舵机）：
+   - `Clock Source` = **Internal Clock**
+   - `Combined Channels` → **`PWM Input on CH1`**（引脚 **PB6** 变绿）
    - `Prescaler = 71`（计数频率 1MHz，即 1 个计数 = 1μs）
    - `Counter Period = 65535`（最大）
-   - `Polarity` = Rising Edge
-   - NVIC 里勾上 `TIM4 global interrupt`
-2. 更简单的做法：把通道配成 **`PWM Input on CH1`**，HAL 会自动测周期
-3. 代码：
+   - `auto-reload preload` = Enable
+   - NVIC 里勾上 **`TIM4 global interrupt`**
+2. 生成代码前核对 CubeMX 里自动配好的这几项（PWM Input 模式的关键）：
+   - `Channel1`：`Input Capture direct mode` + **Rising Edge**，`Input Capture Selection` = **`TI1FP1`**
+   - `Channel2`：`Input Capture indirect mode` + **Falling Edge**，`Input Capture Selection` = **`TI1FP2`**
+   - `Slave Mode` = **Reset**，`Trigger Source` = **TI1FP1**
+3. 代码（**两个通道都要 `HAL_TIM_IC_Start_IT`**，回调里按 `htim->Channel` 区分）：
 
 ```c
-volatile uint32_t cap_freq = 0;
+volatile uint32_t g_period_us = 0;    /* CH1：周期（μs）      */
+volatile uint32_t g_pulse_us  = 0;    /* CH2：高电平脉宽（μs）*/
+volatile uint32_t g_freq_hz   = 0;    /* 由周期换算出的频率   */
 
-/* 输入捕获回调 */
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
-    if (htim->Instance == TIM4)
+    if (htim->Instance != TIM4) return;
+
+    if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)          /* 上升沿 → 周期 */
     {
-        uint32_t period_us = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);  /* PWM 输入模式下是周期 */
-        if (period_us > 0) cap_freq = 1000000UL / period_us;                  /* 计数 1MHz → 1μs */
+        g_period_us = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1) + 1U;
+        if (g_period_us > 0U) g_freq_hz = 1000000UL / g_period_us;
+    }
+    else if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)     /* 下降沿 → 脉宽 */
+    {
+        g_pulse_us = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2) + 1U;
     }
 }
 
-/* 启动： */
+/* 启动：两个通道都要启动，少一个就少测一个量 */
 HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_1);
+HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2);
 ```
 
 4. **自检信号源**：没有外部信号源时，可用另一个定时器的 PWM 输出引脚接到输入捕获引脚（如 TIM3 的 PA6 接 TIM4 的 PB6），设定 1kHz 验证测出来是不是 1kHz
@@ -579,13 +683,16 @@ HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_1);
 - 测量值与设定值误差 <2%
 - 改变信号源频率，测量值跟着变
 - 能讲清"为什么预分频设 71 让换算变成 1μs 一步"
+- 能讲清 CH1 与 CH2 各测的是周期还是脉宽
 
 ### 常见问题
 
 | 现象 | 原因 | 怎么办 |
 |---|---|---|
-| 测不到频率（一直 0） | 引脚接错，或没启动捕获 | 检查接线与 `HAL_TIM_IC_Start_IT` |
-| 频率是实际值的一半/两倍 | 边沿设置错（测了双边沿） | 改成单边沿 |
+| 测不到频率（一直 0） | 引脚接错，或没启动捕获 | 检查接线与两路 `HAL_TIM_IC_Start_IT` |
+| 只有周期没有脉宽 | 只启动了 CH1，或 CH2 没配 indirect/下降沿 | 补 `HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_2)`，核对 CH2 配置 |
+| 频率是实际值的一半/两倍 | 边沿设置错（测了双边沿） | 改成单边沿：CH1 上升沿、CH2 下降沿 |
+| 周期/脉宽总差 1μs | 从模式 Reset 下捕获值 = 周期 − 1 | 换算时 `+1` |
 | 数值乱跳 | 信号有噪声 | 提高触发质量，或软件取中间值 |
 | 超过量程读错 | 信号周期超过 65535μs（<15Hz） | 加大预分频 |
 
@@ -594,27 +701,36 @@ HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_1);
 <a id="p05-b4"></a>
 ## B4 · PWM 参数表
 
-**任务**：把 PWM 配置抽成一张参数表（通道、频率、初始占空比），加一路 PWM 只改表不改逻辑。
+> **本条占用**：TIM3 · CH1（1kHz）+ TIM4 · CH2（10kHz）。**冲突提醒**：TIM3 与 A3 呼吸灯共用（所以 1kHz 这路留在 TIM3）；TIM4 CH2 在资源表里是 B3 的输入捕获通道（**二选一**），且 TIM4 CH1 已被 B1 舵机占着——做本条前先释放舵机与输入捕获。**核心结论：同一个定时器的所有通道共用 PSC/ARR，所以只能同频；要不同频率必须换定时器。**
+
+**任务**：把 PWM 配置抽成一张参数表（定时器、通道、频率、初始占空比），加一路 PWM 只改表不改逻辑。
 
 ### 知识点
 
 **"数据驱动"的思路**：把易变的东西（频率、占空比）从代码逻辑里抽出来放进表。加一路 PWM 只需要在表里加一行——这就是可维护性。
+
+**但表里必须带 `htim` 字段**：频率是**由定时器的 ARR 决定**的，而 ARR 是**每个定时器一个**、不是每个通道一个。所以：
+
+- 表里只写"通道 + 频率"是不够的——同一个定时器的两个通道写不同频率，后写的 ARR 会覆盖先写的，**两路必然同频**；
+- 要把频率真正分开，只能**分到两个不同的定时器**；
+- **改 ARR 前先校验 `htim` 与当前配置一致**（拿到哪个定时器的句柄，就只能改哪个定时器的 ARR）。
 
 ### 操作步骤
 
 ```c
 /* PWM 配置表：加一路 PWM 只需在这里加一行 */
 typedef struct {
-    TIM_HandleTypeDef *htim;
+    TIM_HandleTypeDef *htim;           /* 必须带上：不同频率要在不同定时器上 */
     uint32_t           channel;
     uint32_t           freq_hz;
     uint8_t            init_duty;      /* 百分比 0~100 */
 } pwm_cfg_t;
 
 static pwm_cfg_t g_pwm_table[] = {
-    { &htim3, TIM_CHANNEL_1,  1000,  50 },   /* 呼吸灯 */
-    { &htim3, TIM_CHANNEL_2, 10000,  30 },   /* 电机   */
-    { &htim4, TIM_CHANNEL_1,    50,   7 },   /* 舵机（7.5%=1.5ms）*/
+    /* 呼吸灯：TIM3 的 ARR=999 → 1kHz */
+    { &htim3, TIM_CHANNEL_1,  1000,  50 },
+    /* 电机：  TIM4 的 ARR=99  → 10kHz（不同定时器，才有不同频率） */
+    { &htim4, TIM_CHANNEL_2, 10000,  30 },
 };
 
 static void pwm_table_init(void)
@@ -622,6 +738,15 @@ static void pwm_table_init(void)
     for (uint32_t i = 0; i < sizeof(g_pwm_table)/sizeof(g_pwm_table[0]); i++)
     {
         pwm_cfg_t *p = &g_pwm_table[i];
+
+        /* 改 ARR 前先校验 htim 与当前配置一致：
+         * ARR 是"每定时器一个"，表里写的是哪个 htim，就只能改哪个定时器的 ARR。 */
+        if (p->htim->Instance != TIM3 && p->htim->Instance != TIM4)
+        {
+            printf("[PWM] skip: timer not configured\r\n");
+            continue;
+        }
+
         uint32_t arr_plus1 = 1000000UL / p->freq_hz;      /* 简化：假设 PSC=71，计数 1MHz */
         __HAL_TIM_SET_AUTORELOAD(p->htim, arr_plus1 - 1);
         __HAL_TIM_SET_COMPARE(p->htim, p->channel, arr_plus1 * p->init_duty / 100);
@@ -632,18 +757,25 @@ static void pwm_table_init(void)
 }
 ```
 
-> 上面假设所有 PWM 定时器 PSC 都为 71（计数 1MHz）。若不同，把 PSC 也加进表里。
+> **同一个定时器的所有通道共用 PSC/ARR，所以只能同频**；要不同频率必须换定时器。改 ARR 前先校验 `htim` 与当前配置一致。
+>
+> 上面假设所有 PWM 定时器 PSC 都为 71（计数 1MHz）：**TIM3 和 TIM4 的 PSC 都要在 CubeMX 里手动配成 71**。若某个定时器 PSC 不同，把 PSC 也加进表里。
+>
+> 舵机（50Hz）如果要和这两路**同时**输出，必须**再增加一个定时器**（如 TIM1 CH1 / PA8；注意 P09 启用 FreeRTOS 后 TIM1 会被 HAL 时基占用，那时要另找空闲定时器）；不能塞进 TIM3 或 TIM4，否则 ARR 冲突。
 
 ### 验证方法
 
 - 在表里加一行新 PWM，**不改任何逻辑代码**就能多输出一路
 - 打印出来的初始化信息与表内容一致
-- 评审时能说清"为什么这样写更好维护"
+- 两路频率确实不同（用输入捕获或示波器测：1kHz 与 10kHz）
+- 评审时能说清"为什么这样写更好维护"、"为什么不同频率必须换定时器"
 
 ---
 
 <a id="p05-b5"></a>
 ## B5 · 精细时基（只计数不处理）
+
+> **本条占用**：TIM2（1ms 时基，与 A1/A2 同一个定时器）。**冲突提醒**：不新增资源、不与其他条冲突，只是把 A1 的中断处理降为"只计数"；注意 TIM2 的 1ms 时基在做 B1/B2 时不要被改成别的频率。
 
 **任务**：用定时器做一个更精细的时基：把 A 档的 1ms 中断改成"仅计数、不做任何处理"，主循环判断计数器到点再执行任务，说明这样做的好处。
 
