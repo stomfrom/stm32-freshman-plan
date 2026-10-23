@@ -25,7 +25,7 @@
 - **任务栈溢出导致各种奇怪现象**：栈给小了会随机破坏别的内存，表现为"没改代码但行为变了"；用栈水位检查，别靠猜。
 - **`HAL_Delay` 不是 `osDelay`**：`HAL_Delay` 是忙等——不让出 CPU、不进入阻塞态，但它**不会关闭调度器**（高优先级任务仍能抢占，同优先级靠时间片轮转导致时序抖动，低优先级任务会被饿死）；真实危害是占满 CPU、浪费电、时序抖动。RTOS 里统一用 `osDelay(ms)`（CMSIS-V2）或 `vTaskDelay(pdMS_TO_TICKS(ms))`（原生，需 include `FreeRTOS.h` 与 `task.h`）。
 - **优先级反转**：低优先级任务占着共享资源、高优先级任务等它，中优先级任务插进来导致高优先级被拖住；用互斥锁的优先级继承机制解决。
-- **中断里调用非 FromISR 版本 API**：在中断服务函数里必须用带 `FromISR` 后缀的版本（如 `osMessageQueuePutFromISR` / `xQueueSendFromISR`），并配合 `portYIELD_FROM_ISR()`；用错会崩。另外，会调 FreeRTOS API 的 ISR，其抢占优先级数值必须 ≥ `configMAX_SYSCALL_INTERRUPT_PRIORITY`（默认 5），配成 0~4 会触发断言或静默 HardFault。
+- **中断里调用任务级 API**：在中断服务函数里必须用 FreeRTOS 原生带 `FromISR` 后缀的版本（`xQueueSendFromISR` / `xSemaphoreGiveFromISR`），并配合 `portYIELD_FROM_ISR()`；**注意 CMSIS-RTOS2 没有 `osXxxFromISR` 这一族函数**（`osMessageQueuePutFromISR` 不存在，照抄编不过），`osMessageQueuePut` 只能在任务里用。另外，会调 FreeRTOS API 的 ISR，其抢占优先级数值必须 ≥ `configMAX_SYSCALL_INTERRUPT_PRIORITY`（默认 5），配成 0~4 会触发断言或静默 HardFault。
 - **共享串口不加保护**：两个任务同时 `printf` 会输出交叉的乱码，必须加互斥锁或统一由一个上报任务负责。
 
 ## 调试技巧（无逻辑分析仪时的替代手段）

@@ -32,7 +32,7 @@
 > 📖 每条任务后面都带 **教程** 链接，点击直达手把手教程（含知识点详解、完整操作步骤、可复制代码）。
 > 教程文件：`tutorials/P00-Git与GitHub入门.md`（本卡片在 `tasks/` 目录下，故链接写作 `../tutorials/`）
 
-### A 档 · 全员必做（保底）
+### A 档 · 全员必做（通关底线）
 
 - [ ] 1. 用自己的话写一段不超过 100 字的说明：Git 与网盘（或 QQ 传文件）有什么不同。写进下面第 8 条的仓库 README 里。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a1)
 - [ ] 2. 在电脑上安装 Git，装完打开命令行执行 `git --version`，把输出的版本号截图。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a2)
@@ -44,7 +44,7 @@
 - [ ] 8. 把这个本地仓库与 GitHub 上的远程仓库连起来，并完成第一次 `push`；推送后在**浏览器打开仓库网页**，确认能看到 `hello.txt` 与两条提交记录，并截图。在这个仓库里写一份 README，把你第 1 条的说明放进去。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a8)
 - [ ] 9. 在仓库里新建 `.gitignore` 文件，把 `.o`、`.hex`、`Debug/`、`Objects/` 这几类编译产物写进去（后面做单片机项目时马上就会用到），提交并推送。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-a9)
 
-### B 档 · 全员必做（进阶）
+### B 档 · 全员必做（能力上限）
 
 - [ ] 1. 建立分支：新建分支 `feature/edit-hello`，在分支上修改 `hello.txt` 并提交，然后把该分支合并回主分支，截图 `git log --graph --oneline` 的结果。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-b1)
 - [ ] 2. 做一次"改坏了再救回来"的练习：修改 `hello.txt` 后**先不提交**，用命令把这次修改撤销掉，确认文件回到修改前的样子并截图。 [📖 教程](../tutorials/P00-Git与GitHub入门.md#p00-b2)

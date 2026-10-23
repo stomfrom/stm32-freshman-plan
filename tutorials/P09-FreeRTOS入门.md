@@ -63,8 +63,21 @@ while (1) {
 | 项 | 建议 |
 |---|---|
 | 每个任务的栈 | **128~256 words**（512B~1KB） |
-| `configTOTAL_HEAP_SIZE` | **4096~8192 字节** |
+| `configTOTAL_HEAP_SIZE` | **推荐 8192 字节**（4096 装不下本项目的 5 个任务） |
 | 任务数量 | 3~5 个，别贪多 |
+| `configMAX_PRIORITIES` | CMSIS-RTOS2 + CubeMX 默认 **56**，所以 `osPriorityNormal = 24` 可用；若把它改回 7（CMSIS-RTOS v1 的默认值），`osThreadNew` 会直接返回 NULL |
+
+**20 KB RAM 的预算（按本项目 5 个任务估算）**：
+
+| 项 | 占用 |
+|---|---|
+| MSP（主栈，中断里用）| 1 KB |
+| 静态/全局变量、HAL 缓冲 | ~3 KB |
+| FreeRTOS 堆（`TOTAL_HEAP_SIZE`）| 8192 B（8 KB）—— **注意：5 个任务的 TCB 和栈都是从这块堆里分配的**（1 KB×3 + 512 B×2 的栈约 4 KB + TCB/队列/互斥锁）|
+| **合计** | **≈ 12~13 KB，余量约 7 KB** |
+
+> 设置路径：`Middleware → FREERTOS → Config parameters → TOTAL_HEAP_SIZE`（单位字节）。
+> **别把"任务栈"再单独算一遍**：CMSIS-RTOS2 下 `osThreadNew` 的栈是从 FreeRTOS 堆里切的，不是从上面的静态区另算——所以 `TOTAL_HEAP_SIZE` 要能同时装下"任务栈 + TCB + 队列/锁"。
 
 **栈给小了会溢出**（破坏别的内存，出现各种奇怪现象）；给大了 RAM 不够。
 
@@ -101,8 +114,8 @@ while (1) {
 
 1. CubeMX → `Middleware and Software Packs` → **`FREERTOS`**
 2. `Interface` 选 **`CMSIS_V2`**
-3. 出现"建议修改 HAL 时基源"的提示 → 点 **`Yes`**（会把 HAL 时基改到 TIM 上）
-4. 到 `System Core` → `SYS` 确认 `Timebase Source` 已变成 **`TIM1`**（或别的 TIM，不再是 SysTick）
+3. 出现"建议修改 HAL 时基源"的提示 → 点 **`Yes`**（会把 HAL 时基改到某个定时器上）
+4. 到 `System Core` → `SYS` 确认 `Timebase Source` **不再是 `SysTick`**（CubeMX 通常自动选一个**基本定时器**，F103 上常见 `TIM6` / `TIM7`；不同 CubeMX 版本可能不同，**以你生成的 `main.c` 里 `HAL_InitTick()` 实际用的那个定时器为准**）。**把这个定时器号记下来，后面的项目要避开它**——它已经被 HAL 时基占用，不能再拿来当 PWM / 输入捕获 / 自定义时基
 5. 切到 `FREERTOS` → `Tasks and Queues` 标签 → 里面已有一个 `defaultTask`
 6. `GENERATE CODE`
 
@@ -238,7 +251,7 @@ void ReportTask(void *argument)
 }
 ```
 
-> **本文统一用 CMSIS-RTOS2 API**（`osThreadNew` / `osDelay` / `osMessageQueuePut` 等）；如果你要混用原生 API（比如在 CMSIS 任务里直接调 `vTaskDelay`），必须自己 include `FreeRTOS.h` 与 `task.h`，且**不要混用 `osThreadId_t` 与 `TaskHandle_t`**——它们属于两层封装，类型不兼容，混着传句柄会编译报错或运行异常。
+> **本文统一用 CMSIS-RTOS2 API**（`osThreadNew` / `osDelay` / `osMessageQueuePut` 等）；如果你要混用原生 API（比如在 CMSIS 任务里直接调 `vTaskDelay`），必须自己 include `FreeRTOS.h` 与 `task.h`。关于 `osThreadId_t` 与 `TaskHandle_t`：**它们底层是同一个句柄**——CMSIS-RTOS2 里 `osThreadId_t` 就是 `void *`，`osThreadNew` 返回的就是 FreeRTOS 的任务句柄，两者可以互转（代码里也确实有人这么传给 `uxTaskGetStackHighWaterMark()`）。但**建议统一用 CMSIS-RTOS2 接口**，别在同一份代码里两套调用来回切——读代码的人会分不清某个句柄到底是哪一层创建出来的。
 
 > **用 CubeMX 方式时**：任务函数框架已生成在 `freertos.c`，你只需在 `for(;;)` 里填内容，并加 `printf` 重定向（注意要在任务启动前初始化串口）。
 
@@ -577,6 +590,9 @@ osMutexId_t uart_mtx = osMutexNew(NULL);
 **2. 封装成带保护的打印函数**
 
 ```c
+#include <stdarg.h>      /* va_list / va_start / va_end */
+#include <string.h>      /* strlen */
+
 /* 线程安全的打印（串口是共享资源） */
 void safe_printf(const char *fmt, ...)
 {
@@ -586,11 +602,16 @@ void safe_printf(const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
 
-    osMutexAcquire(uart_mtx, osWaitForever);    /* 锁定 */
+    if (uart_mtx == NULL) return;                    /* 锁没创建成功：直接放弃，别把 NULL 传下去 */
+    if (osMutexAcquire(uart_mtx, osWaitForever) != osOK) return;   /* 检查返回值 */
     HAL_UART_Transmit(&huart1, (uint8_t *)buf, strlen(buf), 100);
-    osMutexRelease(uart_mtx);                   /* 解锁 */
+    osMutexRelease(uart_mtx);                        /* 解锁 */
 }
 ```
+
+> **⚠️ 两个容易忽略的点**：
+> 1. **`osMutexNew()` 可能返回 `NULL`**（堆不够），拿 `NULL` 去 `osMutexAcquire` 会直接 HardFault——所以创建时就要判，用之前也要判。
+> 2. **`char buf[128]` 是放在任务栈上的**：`vsnprintf` + `HAL_UART_Transmit` 的调用深度会比普通任务更深，1 KB 栈偏紧。**跑 `printf` 的任务建议给 1280~1536 字节**（CubeMX 界面填 320~384 words）。
 
 **3. 所有任务改用 `safe_printf`**
 
@@ -627,60 +648,74 @@ void safe_printf(const char *fmt, ...)
 - 随机死机 / 重启
 - 某个变量莫名其妙被改
 
-**栈水位（High Water Mark）**：记录该任务**历史上栈最多用到过多少**。用法：
+**栈水位（High Water Mark）**：记录该任务**历史上栈最多用到过多少**，换算成"还剩多少没用"。**本教程统一用 CMSIS-RTOS2 的 `osThreadGetStackSpace()`——它返回的就是"剩余栈字节数"**：
 
 ```c
-UBaseType_t hw = uxTaskGetStackHighWaterMark(task_handle);
-/* hw = 剩余的栈空间（words），越小说明用得越多 */
+uint32_t left = osThreadGetStackSpace(led_id);   /* 单位：字节 */
+/* left 越小说明用得越多；最紧张的任务必须剩余 ≥ 256 字节 */
 ```
 
-**判断标准**：
-- 剩余 < 20% → 栈偏小，有溢出风险
-- 剩余 40%~80% → 合理
-- 剩余 > 85% → 浪费，可以改小
+**判断标准**（只用下面这一条硬指标）：
+- **最紧张的任务剩余 ≥ 256 字节** → 安全
+- 任一任务剩余 **< 256 字节** → 栈偏小，必须加大
+- 剩余特别多（比如 > 2 KB）→ 可以把该任务栈改小省 RAM，但不是必须
+
+> **另一套口径（只作对照，别当主路径）**：FreeRTOS 原生的 `uxTaskGetStackHighWaterMark(handle)` 返回的是 **words（字）**，1 word = 4 字节，**×4 才是字节数**。网上很多例程写的是 words 或"使用率百分比"，和这里的字节口径不是一回事，**两套数字不能直接对比**。
 
 ### 操作步骤
 
-**1. 在 CubeMX 里确保 `configCHECK_FOR_STACK_OVERFLOW` 已开启**（`FREERTOS` → `Advanced settings` 或 `Config parameters`）
+**1. 打开栈溢出检查**：`Middleware → FREERTOS → Config parameters → CHECK_FOR_STACK_OVERFLOW = Option 2`（比 Option 1 检查得更严，能更早抓到溢出）。
 
-**2. 获取每个任务的栈水位**
+开启后**必须实现钩子函数**，否则溢出时只会在 CubeMX 生成的默认钩子里 `while(1)` 停住，**看不出是哪个任务溢出的**：
+
+```c
+/* 放在 USER CODE 4 区（或 freertos.c 的用户代码区） */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    taskDISABLE_INTERRUPTS();
+    printf("STACK OVERFLOW: %s\r\n", pcTaskName);   /* 串口直接打出任务名 */
+    for (;;) { }
+}
+```
+
+**2. 读每个任务的剩余栈**
 
 需要任务的句柄。用 CubeMX 创建的任务，句柄在 `freertos.c` 里（如 `defaultTaskHandle`）；自己创建的用 `osThreadNew` 的返回值。
 
 ```c
-/* 打印所有任务的栈水位 */
-void vTaskList_print(void)   /* 可放在一个低优先级监控任务里 */
+/* 打印所有任务的剩余栈（字节）—— 可放在一个低优先级监控任务里 */
+void print_stack_watermark(void)
 {
-    printf("Task         StackHW(words)  Status\r\n");
-    printf("LedTask      %4u\r\n", (unsigned)uxTaskGetStackHighWaterMark(led_id));
-    printf("ReportTask   %4u\r\n", (unsigned)uxTaskGetStackHighWaterMark(rep_id));
-    printf("KeyTask      %4u\r\n", (unsigned)uxTaskGetStackHighWaterMark(key_id));
-    printf("ProdTask     %4u\r\n", (unsigned)uxTaskGetStackHighWaterMark(prod_id));
-    printf("ConsTask     %4u\r\n", (unsigned)uxTaskGetStackHighWaterMark(cons_id));
+    printf("Task         LeftStack(bytes)\r\n");
+    printf("LedTask      %4lu\r\n", (unsigned long)osThreadGetStackSpace(led_id));
+    printf("ReportTask   %4lu\r\n", (unsigned long)osThreadGetStackSpace(rep_id));
+    printf("KeyTask      %4lu\r\n", (unsigned long)osThreadGetStackSpace(key_id));
+    printf("ProdTask     %4lu\r\n", (unsigned long)osThreadGetStackSpace(prod_id));
+    printf("ConsTask     %4lu\r\n", (unsigned long)osThreadGetStackSpace(cons_id));
 }
 ```
 
 **3. 记录数据并调优**
 
-先跑 5 分钟（让各任务都跑到过最坏情况），记录水位：
+先跑 5 分钟（让各任务都跑到过最坏情况），记录**剩余栈字节数**：
 
-| 任务 | 初始栈大小(words) | 剩余水位(words) | 使用率 | 调整后栈大小 | 调整后水位 |
-|---|---|---|---|---|---|
-| LedTask | 256 | | | | |
-| ReportTask | 256 | | | | |
-| KeyTask | 256 | | | | |
-| ProdTask | 256 | | | | |
-| ConsTask | 256 | | | | |
+| 任务 | 初始栈(字节) | 剩余栈(字节) | 调整后栈大小(字节) | 调整后剩余(字节) |
+|---|---|---|---|---|
+| LedTask | 1024 | | | |
+| ReportTask | 1024 | | | |
+| KeyTask | 1024 | | | |
+| ProdTask | 512 | | | |
+| ConsTask | 512 | | | |
 
-**使用率 = (初始 - 剩余) / 初始**，目标落在 40%~80%。
+**调整规则**：只看"最紧张的那个任务剩多少"——**剩余 < 256 字节就加大**；加大后重跑 5 分钟再测一次，确认仍 ≥ 256 字节。
 
-调整：改 CubeMX 里的 Stack Size，或改 `osThreadNew` 的参数。
+调整位置：改 CubeMX 里的 `Stack Size`（**界面单位是 words，256 words = 1024 字节**），或改 `osThreadNew` 的 `osThreadAttr_t.stack_size`（**这个字段是字节**）。
 
 ### 验证方法
 
-- 5 个任务的水位都有记录
-- 调整后使用率落在 40%~80%
-- 调整后功能仍正常（连续跑 10 分钟）
+- 5 个任务的**剩余栈（字节）**都有记录
+- 最紧张的任务调整后**剩余 ≥ 256 字节**，且连续跑 10 分钟不掉到 256 以下
+- 调整后功能仍正常
 - 能讲清"栈溢出会有什么后果"（破坏相邻内存，出现"代码没改但行为变了"）
 
 ### 常见问题
@@ -732,10 +767,11 @@ void MonitorTask(void *argument)
     {
         safe_printf("\r\n---- t=%lus ----\r\n", (unsigned long)(HAL_GetTick()/1000));
         safe_printf("queue depth  = %lu\r\n", (unsigned long)osMessageQueueGetCount(adc_q));
-        safe_printf("led HW=%u  adc HW=%u  rep HW=%u\r\n",
-                    (unsigned)uxTaskGetStackHighWaterMark(led_id),
-                    (unsigned)uxTaskGetStackHighWaterMark(adc_id),
-                    (unsigned)uxTaskGetStackHighWaterMark(rep_id));
+        /* 与 B3 同一口径：osThreadGetStackSpace() 返回的是"剩余字节数"，不是 words */
+        safe_printf("led rest=%u B  adc rest=%u B  rep rest=%u B\r\n",
+                    (unsigned)osThreadGetStackSpace(led_id),
+                    (unsigned)osThreadGetStackSpace(adc_id),
+                    (unsigned)osThreadGetStackSpace(rep_id));
         safe_printf("free heap    = %lu\r\n", (unsigned long)xPortGetFreeHeapSize());
         safe_printf("adc=%lu rep=%lu err=%lu\r\n",
                     (unsigned long)adc_cnt, (unsigned long)rep_cnt, (unsigned long)err_cnt);
@@ -765,7 +801,7 @@ void MonitorTask(void *argument)
 
 - 30 分钟连续运行**不死机、不重启、无任务卡死**
 - 三个关键指标（堆、栈、队列）**全程稳定**
-- 有完整的 10 行记录表
+- 有完整的连续运行记录表（**每 5 分钟一行：5 / 10 / 15 / 20 / 25 / 30，共 6 行**）
 - 串口日志完整保留作为证据
 
 ---
@@ -873,30 +909,37 @@ FreeRTOSConfig.h 默认：configMAX_SYSCALL_INTERRUPT_PRIORITY = 5
 
 | 场景 | 任务里用 | 中断里用 |
 |---|---|---|
-| 发消息到队列 | `osMessageQueuePut(q, &msg, 0, 0)` | `osMessageQueuePutFromISR(q, &msg, 0, &woken)` + `portYIELD_FROM_ISR(woken)` |
-| 释放信号量 | `osSemaphoreRelease(sem)` | `...FromISR` 版本（或 `xSemaphoreGiveFromISR`）|
+| 发消息到队列 | `osMessageQueuePut(q, &msg, 0, 0)` | `xQueueSendFromISR((QueueHandle_t)q, &msg, &woken)` + `portYIELD_FROM_ISR(woken)` |
+| 释放信号量 | `osSemaphoreRelease(sem)` | `xSemaphoreGiveFromISR((SemaphoreHandle_t)sem, &woken)` + `portYIELD_FROM_ISR(woken)` |
 | 延时 | `osDelay(ms)` | ❌ 中断里绝对不能延时 |
 | 打印 | `printf(...)` | ❌ 中断里不要打印（慢、不可重入）|
 
 核心原则：**中断里只做"投递/通知"，把耗时的活留给任务**。
 
+> **⚠️ 关键：CMSIS-RTOS2 没有 `*FromISR` 变体。** `osMessageQueuePut` / `osSemaphoreRelease` 这些是**任务级 API**（`timeout` 参数在中断里没有意义），**中断里调用属于非法用法**——轻则丢消息，重则触发断言或 HardFault。
+> **中断里必须改用 FreeRTOS 原生 API**：`xQueueSendFromISR` / `xSemaphoreGiveFromISR`，并补上
+> `#include "FreeRTOS.h"`、`#include "queue.h"`、`#include "semphr.h"`（`portYIELD_FROM_ISR` 在 `FreeRTOS.h` 里）。
+
 **示例：P06 的 UART 接收回调，把收到的字节投进队列**
 
 ```c
-/* 队列与接收缓冲（任务里创建/初始化） */
+/* 队列与接收缓冲。队列用 osMessageQueueNew 创建：
+ *   uart_q = osMessageQueueNew(32, 1, NULL);
+ * 它返回的 osMessageQueueId_t 底层就是 FreeRTOS 的 QueueHandle_t，可以直接强转给原生 API。 */
 osMessageQueueId_t uart_q;
 uint8_t            g_rx_byte;
 
-/* 任务侧：普通 Put，允许阻塞等待 */
-osMessageQueuePut(uart_q, &byte, 0, 0);
+/* 任务侧：用 CMSIS-RTOS2 接口，允许阻塞等待 */
+osMessageQueuePut(uart_q, &g_rx_byte, 0, 0);
 
-/* 中断侧：必须用 FromISR 版本，且不能阻塞（超时只能填 0） */
+/* 中断侧：CMSIS-RTOS2 没有 FromISR 变体，必须用 FreeRTOS 原生 API
+ * 需 #include "FreeRTOS.h"、"queue.h" */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance != USART1) return;
 
-    uint32_t woken = 0;
-    osMessageQueuePutFromISR(uart_q, &g_rx_byte, 0, &woken);
+    BaseType_t woken = pdFALSE;
+    xQueueSendFromISR((QueueHandle_t)uart_q, &g_rx_byte, &woken);
 
     /* 如果有更高优先级任务因这次投递变为就绪，请求一次上下文切换 */
     portYIELD_FROM_ISR(woken);
@@ -905,16 +948,15 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 ```
 
-> **封装差异提醒**：`...FromISR` 是 FreeRTOS 原生风格的 API。CMSIS-RTOS2 的各家封装对它的导出情况不完全一致（有的版本只提供 `osMessageQueuePut`，而 STM32 的 FreeRTOS 封装里提供的可能是 `osMessageQueuePutFromISR`）。**如果你的工程里编译报"未定义"，就用原生版本，语义完全一样**：
+> **封装差异提醒（必读）**：**CMSIS-RTOS2 里没有 `*FromISR` 后缀的函数**（`osMessageQueuePutFromISR` / `osSemaphoreReleaseFromISR` 都是不存在的，网上有些例程是别的 RTOS 或旧封装的写法）。判断标准只有一条：
+> **中断里绝不调用会阻塞、或会等超时的任务级 API**——凡是进中断要用的，一律换成 FreeRTOS 原生的 `...FromISR` 版本，并配 `portYIELD_FROM_ISR`：
 >
 > ```c
-> /* include "FreeRTOS.h"、"task.h"、"queue.h" */
+> /* 需 #include "FreeRTOS.h"、"queue.h" */
 > BaseType_t woken = pdFALSE;
 > xQueueSendFromISR((QueueHandle_t)uart_q, &g_rx_byte, &woken);
 > portYIELD_FROM_ISR(woken);
 > ```
->
-> 判断标准只有一条：**中断里绝不调用会阻塞、或会等超时的任务级 API**。
 
 ### 3. 打开 configASSERT / USE_FULL_ASSERT
 
@@ -922,21 +964,23 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 
 **做法**：
 
-1. CubeMX → `Project Manager → Code Generator` 勾选 **`Enable Full Assert`**（生成 `USE_FULL_ASSERT`）；
+1. **先分清两套断言，别混**：
+   - **`configASSERT`（FreeRTOS）**：定义在 `FreeRTOSConfig.h` 里，CubeMX 默认已生成。**抓 ISR 优先级越界（`vPortValidateInterruptPriority`）靠的是它**。
+   - **`USE_FULL_ASSERT`（HAL）**：CubeMX → `Project Manager → Code Generator` 勾选 **`Enable Full Assert`** 才会生成，管的是 HAL 的 `assert_param()` 参数检查（比如给 HAL 函数传了非法句柄）——**它抓不到 ISR 优先级问题**。
 2. 确认 `FreeRTOSConfig.h` 里 `configASSERT` 有定义（CubeMX 默认生成的形式类似）：
 
 ```c
 #define configASSERT(x)  if ((x) == 0) { taskDISABLE_INTERRUPTS(); for (;;); }
 ```
 
-3. 同时把 `assert_param()` 接到你自己的死循环/打印上；出错时能停在断言处，比随机死机好查一百倍。
+3. 建议把两套断言都接到"打印 + 停机"（`configASSERT` 可以改成先 `printf` 再死循环，`assert_param` 失败时也打到串口）；出错时能停在断言处、看到是哪条断言，比随机死机好查一百倍。
 
 ### 验证方法
 
 - 在 `NVIC` 里能看到 EXTI / USART1 的抢占优先级都是 6
 - 故意把一个会调 FreeRTOS API 的 ISR 优先级改成 4，运行时能被 `configASSERT` 抓住（验证完改回去）
 - 串口中断投递数据 → 任务从队列取出并打印，长时间运行不乱
-- 能讲清"为什么中断里不能用 `osMessageQueuePut`（阻塞版）、只能用 `...FromISR`"
+- 能讲清"为什么中断里不能用 `osMessageQueuePut`（CMSIS-RTOS2 没有 `*FromISR` 变体），必须改用 `xQueueSendFromISR`"
 
 ### 常见问题
 
@@ -946,7 +990,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 | 断言停在 `vPortValidateInterruptPriority` | ISR 抢占优先级数值太小（0~4）| 把该中断优先级改到 5~15 |
 | 中断里 `printf` 导致乱码/卡死 | 打印不可重入且耗时 | 中断里只投队列，任务里打印 |
 | 投递了但任务没反应 | 忘了 `portYIELD_FROM_ISR`（或没在任务里等队列）| 补上，并检查任务的 `osMessageQueueGet` |
-| 中断里等队列超时 | 用了阻塞版 Put / 超时非 0 | 中断里超时必须填 0 |
+| 编译报 `xQueueSendFromISR` 未定义 | 没 include 队列头文件 | 补 `#include "FreeRTOS.h"` 与 `#include "queue.h"` |
 
 ---
 

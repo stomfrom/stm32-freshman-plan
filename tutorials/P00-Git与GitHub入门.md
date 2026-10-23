@@ -431,7 +431,7 @@ a1b2c3d 新增 hello.txt 并写入初始内容
 | Private（私有） | 只有你自己（和被你邀请的人） | 学习作业、未完成的代码 |
 | Public（公开） | 所有人 | 开源项目 |
 
-**任务要求建私有**——因为后面是你的作业，不需要给别人看（要给老师看时，在设置里加协作者即可）。
+**任务要求建私有**——因为后面是你的作业，不需要给别人看（要给老师看时，在设置里加协作者即可，具体步骤见 A8 第 7 步）。
 
 ### 操作步骤
 
@@ -500,7 +500,7 @@ git push -u origin master
 
 > 如果报 `src refspec master does not match any`，你的分支名是 `main`，把 `master` 换成 `main`。
 
-**第一次推送会弹出登录窗口**（关于这个窗口，见下方"常见问题"——这是新手最容易卡住的地方）。
+**第一次推送会要求登录或授权**（新版 Git Credential Manager 默认弹出**浏览器**，按 GitHub 账号登录授权即可；只有弹出**账号/密码输入框**时，密码才要填 Personal Access Token。详见下方"常见问题"——这是新手最容易卡住的地方）。
 
 3. 推送成功的输出形如：
 
@@ -509,13 +509,13 @@ Enumerating objects: 6, done.
 ...
 To https://github.com/你的用户名/my-stm32-learning.git
  * [new branch]      master -> master
-Branch 'master' set up to track 'remote branch master' from 'origin'.
+branch 'master' set up to track 'origin/master'.
 ```
 
 4. **打开浏览器**，刷新你的仓库页面，确认能看到：
    - `hello.txt` 文件
    - **两条**提交记录
-5. 在仓库里新增 `README.md`（可用记事本创建），把 A1 写的那 100 字说明放进去，然后提交并推送：
+5. 在仓库里新增 `README.md`（可用记事本创建），把 A1 写的那 100 字说明放进去，然后提交并推送。**用记事本保存时把编码选成 `UTF-8`**，否则推到 GitHub 上中文会乱码；更省事的做法是直接点网页右上角 `Add file` → `Create new file` 在线建。
 
 ```powershell
 git add README.md
@@ -524,12 +524,19 @@ git push
 ```
 
 6. 截图仓库网页（能看到文件列表和提交历史）。
+7. **把带教人加为协作者**（私有仓库不加协作者，老师打不开，等于没交）：
+   1. 打开仓库网页 → 右上角 **`Settings`**
+   2. 左侧栏找 **`Collaborators`**（新版界面在 `Access` → `Collaborators`）
+   3. 点 **`Add people`** → 输入带教人的 **GitHub 用户名**（或他绑定 GitHub 的邮箱）→ 选中后点 **`Add ... to this repository`**
+   4. 带教人收到邀请邮件，接受后就能打开你的仓库
+8. 截图协作者页面（能看到带教人已在列表里）。
 
 ### 验证方法
 
 - 浏览器里能看到 `hello.txt` 与 `README.md`
 - 提交历史里有 ≥2 条记录
 - `git remote -v` 显示的地址正确
+- **仓库 `Settings` → `Collaborators` 里能看到带教人**（截图一并提交）
 
 ### 常见问题
 
@@ -539,7 +546,7 @@ git push
 
 | 原因 | 说明 | 怎么办 |
 |---|---|---|
-| **密码认证已停用** | GitHub 早就不让用登录密码做 Git 操作了 | 弹出窗口里**用户名填 GitHub 用户名，密码填 Personal Access Token**（不是登录密码） |
+| **密码认证已停用** | GitHub 早就不让用登录密码做 Git 操作了 | **先看弹的是哪种窗口**：弹浏览器就按 GitHub 登录授权（新版 Credential Manager 默认这样）；**只有**弹出账号/密码框时，才把密码填成 Personal Access Token（不是登录密码） |
 | **装了加速镜像** | 本机配了把 `github.com` 改写到其他网站的规则，而镜像站只读、不接受推送 | 检查 `git config --global --get-regexp url.` 有没有输出；有的话说明有改写规则，需要改用官方地址或调整配置 |
 | **错误凭据被缓存** | 之前输错过一次，系统记住了错的那份 | 在 Windows「凭据管理器」→「Windows 凭据」里删掉 github.com 相关条目，重新推送 |
 
@@ -586,6 +593,7 @@ git push
 *.map
 
 # Keil / 编译输出目录
+# （MDK-ARM/*/ 只该忽略 Keil 的构建输出子目录；若发现 RTE 目录也被忽略，见下方说明）
 Debug/
 Release/
 Objects/
@@ -598,6 +606,8 @@ MDK-ARM/*/
 Thumbs.db
 Desktop.ini
 ```
+
+> **`MDK-ARM/*/` 这一条要以实际工程树确认**：它只该忽略 Keil 的构建输出子目录。如果你发现 `MDK-ARM/RTE/`（里面含 `RTE_Components.h`）也被一起忽略了，就在文件末尾补一行 `!MDK-ARM/RTE/` 把它保留下来——这条规则等你做 P01 的真工程时再核对也不迟。
 
 3. 提交推送：
 
@@ -656,23 +666,32 @@ git commit -m "在分支上修改 hello.txt"
 # 4. 切回主分支（master 或 main）
 git checkout master
 
-# 5. 合并分支
-git merge feature/edit-hello
+# 5. ⭐ 关键一步：在主分支上也做一次提交（改别的文件，避免冲突）
+#    否则合并会走快进（fast-forward）：历史是一条直线，看不到合并节点
+#    在仓库里新建一个 main-only.txt，随便写一行字，然后：
+git add main-only.txt
+git commit -m "在主分支上新增 main-only.txt（制造分叉）"
 
-# 6. 看图
+# 6. 合并分支（--no-ff 强制生成一次合并提交，历史里才有合并结构）
+git merge --no-ff feature/edit-hello -m "合并 feature/edit-hello 分支"
+
+# 7. 看图
 git log --graph --oneline
 ```
 
 预期输出：
 
 ```
-*   f5e6d7c (HEAD -> master) Merge branch 'feature/edit-hello'
+*   f5e6d7c (HEAD -> master) 合并 feature/edit-hello 分支
 |\
 | * e4d5c6b (feature/edit-hello) 在分支上修改 hello.txt
+* | d3c2b1a 在主分支上新增 main-only.txt（制造分叉）
 |/
 * b2c3d4e 修改 hello.txt 内容
 * a1b2c3d 新增 hello.txt 并写入初始内容
 ```
+
+> **为什么必须加 `--no-ff`**：如果主分支在分叉后没有新提交，Git 默认会直接把主分支指针快进到分支末端（fast-forward），历史变成一条直线，`git log --graph` 里就没有 `|\` `|/` 这种合并结构——你会以为合并失败了。加 `--no-ff` 才会强制生成上面那个合并提交。
 
 截图。
 
@@ -931,7 +950,7 @@ git commit -m "补充 README：提交信息规范与反例对照"
 git push
 ```
 
-> 那两条 `aaa` 的提交不用删（删了反而麻烦）。让它留着，当作一个反面教材。
+> 那条 `aaa` 的提交不用删（删了反而麻烦）。让它留着，当作一个反面教材。
 
 ### 验证方法
 

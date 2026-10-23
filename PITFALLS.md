@@ -38,6 +38,8 @@
 - **现象**：主循环里的标志位永远读不到变化。**原因**：中断里改的变量没加 `volatile`，被编译器优化掉了。**解决**：给共享变量加 `volatile`。
 - **现象**：PWM 完全没有输出。**原因**：忘了调 `HAL_TIM_PWM_Start`，或引脚被 CubeMX 分配给别的功能。**解决**：检查启动调用与引脚复用。
 - **现象**：定时器中断频率只有预期的一半。**原因**：计算预分频时忘了公式里是 `(PSC+1)`，或定时器挂的总线频率与假设的不一致。**解决**：重新按 `周期 = (PSC+1)×(ARR+1)/时钟` 核算。
+- 🆕 **现象**：PWM 三档调速写好了，但三档转速几乎一样、电机像没反应。**原因**：算 CCR 时把"ARR+1"写成了 100（以为 ARR=99），而本项目的 TIM3 是 `ARR=999` → 30%/60%/100% 实际变成 3%/6%/10%。**解决**：CCR 一律按**本定时器实际的 ARR+1** 算：`uint32_t arr_plus1 = __HAL_TIM_GET_AUTORELOAD(&htimx) + 1U; ccr = duty_pct * arr_plus1 / 100U;`，不要写死 100/1000。
+- 🆕 **现象**：双击功能一加，串口每次双击都打印 `DOUBLE` 再跟一条 `SHORT`；三连击变成 `DOUBLE, DOUBLE, SHORT`。**原因**：报完双击后状态机回到"等按下/等松开"，第二击的**松开**又被当成一次新的短按。**解决**：双击上报后必须进一个"吞掉这一击"的状态（只等松开、不上报），再回空闲。
 - 🆕 **现象**：想用一个定时器的两个通道输出两个不同频率的 PWM（如 CH1=1kHz、CH2=10kHz），改完一个另一个也跟着变。**原因**：**ARR 是每个定时器一个，不是每个通道一个**；所有通道共用 PSC/ARR，所以只能同频。**解决**：不同频率必须用**不同的定时器**；如果非要用同一个定时器，就只能同频，靠改 CCR 调占空比。
 - 🆕 **现象**：打印 `HAL_RCC_GetPCLK1Freq()` 得到 36MHz，怀疑时钟树配错了。**原因**：默认配置下 PCLK1 = SYSCLK/2 = 36MHz；**定时器时钟是 PCLK1×2 = 72MHz**（APB1 分频系数 ≠1 时倍频）。**解决**：打印 `SystemCoreClock`（72000000）对照，或写 `HAL_RCC_GetPCLK1Freq()*2`；别把 PCLK1 直接当定时器时钟。
 
@@ -56,6 +58,7 @@
 - **现象**：OLED 显示乱码或上下颠倒。**原因**：字模取模方式（逐行/逐列、高位在前/在后）与驱动不一致。**解决**：改取模软件设置，或改驱动的位处理顺序。
 - 🆕 **现象**：OLED 白屏，代码从网上抄的、编译也没错。**原因**：网上例程一半是 **SPI 接口**、一半是不同驱动芯片（SSD1306/SSD1309/SH1106），字模顺序与初始化序列都不通用。**解决**：直接用 `tutorials/P07` 附录 A 的驱动（绑定 I2C1/PB6·PB7/7 位地址 0x3C），先用 I2C 扫描确认 0x3C 在，再查字模设置。
 - **现象**：ADC 读数始终接近满量程。**原因**：输入电压超过参考电压，或引脚被配成输出。**解决**：量输入电压、检查引脚配置。
+- 🆕 **现象**：ADC 读数整体偏大、抖动大，和万用表怎么都对不上。**原因**：**ADC 时钟超限**——F103 的 ADCCLK 上限是 **14 MHz**，CubeMX 默认 `PCLK2/2`，72 MHz 下就是 36 MHz。**解决**：`ADC → Parameter Settings → Clock Prescaler` 选 **`PCLK2 divided by 6`**（12 MHz）；再确认上电做过 `HAL_ADCEx_Calibration_Start()` 校准。
 - **现象**：ADC 读数跳动几十个计数。**原因**：信号源内阻大但采样时间太短，或地线噪声。**解决**：加长采样时间、加滤波、检查接地。
 - 🆕 **现象**：把参数写进 Flash，`HAL_FLASHEx_Erase` 返回错误 / 程序 HardFault。**原因**：**地址算错**。F103C8T6 只有 64KB（`0x08000000~0x0800FFFF`），最后一页（1KB）起点是 **`0x0800FC00`**；写成 `0x0801FC00` 是 128KB 器件（CBT6）的地址。**解决**：`0x08000000 + FLASH_SIZE − 0x400`，并用 `FLASHSIZE_BASE`（0x1FFFF7E0）读到的 `FLASH_SIZE` 做断言。
 
@@ -64,7 +67,7 @@
 - **现象**：创建任务的函数返回了失败，但程序还在跑。**原因**：FreeRTOS 堆太小，任务没创建成功。**解决**：加大 `configTOTAL_HEAP_SIZE`，并检查任务创建函数的返回值。
 - 🆕 **现象**：任务里一调用 `printf` 就死机、或别的任务行为莫名其妙。**原因**：**CMSIS-RTOS2 的 `stack_size` 单位是字节，CubeMX 界面里填的是 words（字）**，两者差 4 倍；跑 `printf` 的任务给的空间不够就会栈溢出、踩坏别的内存。**解决**：跑 `printf` 的任务至少给 **1024 字节**；用 `osThreadGetStackSpace()` 看剩余字节数，保证最紧张的任务还剩 ≥256 字节。
 - 🆕 **现象**：用了 `HAL_Delay(500)` 之后，其他任务打印节奏变乱、甚至有的任务像死了一样。**原因**：`HAL_Delay` 是**忙等**——不让出 CPU、不进入阻塞态，但**不关闭调度器**：高优先级任务仍会抢占，同优先级靠时间片轮转导致节拍拉长且不可预测，低优先级任务会被饿死。**解决**：RTOS 里用 `osDelay(500)` / `vTaskDelay(pdMS_TO_TICKS(500))`，不要用 `HAL_Delay`。
-- 🆕 **现象**：在中断回调里调 `osMessageQueuePut` 后直接 HardFault，或 `configASSERT` 断言。**原因**：① 中断里必须用 `...FromISR` 版本；② 调用 FreeRTOS API 的中断，其**抢占优先级数值必须 ≥ `configMAX_SYSCALL_INTERRUPT_PRIORITY`（默认 5）**，配成 1~4 就会触发断言或静默崩溃。**解决**：EXTI/UART 中断的抢占优先级统一配 **6 或更大**，回调里用 `osMessageQueuePutFromISR(...)` + `portYIELD_FROM_ISR()`；CubeMX 里开 `USE_FULL_ASSERT` 让越界能直接断住。
+- 🆕 **现象**：在中断回调里调 `osMessageQueuePut` 后直接 HardFault，或 `configASSERT` 断言。**原因**：① 中断里必须用 `...FromISR` 版本；② 调用 FreeRTOS API 的中断，其**抢占优先级数值必须 ≥ `configMAX_SYSCALL_INTERRUPT_PRIORITY`（默认 5）**，配成 1~4 就会触发断言或静默崩溃。**解决**：EXTI/UART 中断的抢占优先级统一配 **6 或更大**；回调里用 FreeRTOS 原生的 `xQueueSendFromISR(q, &msg, &woken)` + `portYIELD_FROM_ISR(woken)`（**CMSIS-RTOS2 没有 `osMessageQueuePutFromISR` 这种函数**，`osMessageQueuePut` 只能在任务里调）。要抓优先级越界，靠 `FreeRTOSConfig.h` 里的 `configASSERT`（不是 HAL 的 `USE_FULL_ASSERT`）。
 - **现象**：两个任务同时打印，串口输出交叉成乱码。**原因**：串口没加互斥保护。**解决**：加互斥锁，或统一由一个任务负责输出。
 
 ---

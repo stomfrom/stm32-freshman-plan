@@ -236,7 +236,7 @@ tasks/P05-定时器与PWM.md      ← 你要做的项目
 
 ```bash
 git add .
-git commit -m "P05: 完成定时器与PWM，A档5条+B档4条，附示波器实测波形"
+git commit -m "P05: 完成定时器与PWM，A档5条+B档5条，附示波器实测波形"
 git push
 ```
 
@@ -365,7 +365,7 @@ https://github.com/你的用户名/你的仓库/tree/main/projects/P05-定时器
 | [`GANTT.csv`](GANTT.csv) | 逐项目排期（可导入 Excel），含交付日与备注 | 带教人 |
 | [`PITFALLS.md`](PITFALLS.md) | 踩坑库（现象 → 原因 → 解决），**谁踩谁补，评审加分** | 所有人 |
 | [`FAQ_入门必看.md`](FAQ_入门必看.md) | 新生最常卡的 16 个问题 | 所有人 |
-| [`CHANGELOG.md`](CHANGELOG.md) | 修订记录（v1.1 改了什么、为什么） | 维护者 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 修订记录（v1.1 / v1.2 各改了什么、为什么） | 维护者 |
 | [`LICENSE`](LICENSE) | 授权：文档 CC BY 4.0 / 代码 MIT | 二次使用者 |
 
 ### 文件之间的引用关系（想找某个知识点时按这张图走）
